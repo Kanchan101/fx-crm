@@ -1,0 +1,281 @@
+╔══════════════════════════════════════════════════════════════╗
+║   FX CONSULTING CRM — ONE DAY BUILD GUIDE                   ║
+║   From zero to live at crm.fxconsulting.in                   ║
+╚══════════════════════════════════════════════════════════════╝
+
+PREREQUISITES (install these first if you don't have them):
+──────────────────────────────────────────────────────────────
+1. Node.js 18+ → https://nodejs.org (download LTS)
+2. Git        → https://git-scm.com
+3. VS Code    → https://code.visualstudio.com
+4. A terminal (Command Prompt / PowerShell / Terminal)
+
+After installing Node.js, verify:
+  node --version    (should show v18+ or v20+)
+  npm --version     (should show 9+ or 10+)
+
+════════════════════════════════════════════════════════════════
+HOUR 1: PROJECT SETUP + FRONTEND (9:00 AM - 10:00 AM)
+════════════════════════════════════════════════════════════════
+
+STEP 1: Create project folder
+───────────────────────────────
+Open terminal and run these commands one by one:
+
+  mkdir fx-crm
+  cd fx-crm
+  mkdir client server database
+
+STEP 2: Set up React frontend
+──────────────────────────────
+  cd client
+  npx create-react-app . --template default
+  
+  (When it asks "Ok to proceed?" → type y and press Enter)
+  (This takes 2-3 minutes)
+
+STEP 3: Copy CRM code
+──────────────────────
+  - Open the file "App.jsx" from this project
+  - Copy ALL its contents
+  - Paste into: client/src/App.js  (replace everything)
+
+  Also delete these unused files:
+    del src\App.css           (Windows)
+    del src\App.test.js
+    del src\logo.svg
+    
+    OR on Mac/Linux:
+    rm src/App.css src/App.test.js src/logo.svg
+
+STEP 4: Test it works
+─────────────────────
+  npm start
+
+  → Browser opens http://localhost:3000
+  → You should see the FX Consulting CRM
+  → Click through all modules to verify
+  → Press Ctrl+C to stop
+
+════════════════════════════════════════════════════════════════
+HOUR 2: DATABASE SETUP (10:00 AM - 11:00 AM)  
+════════════════════════════════════════════════════════════════
+
+We'll use Supabase (free managed PostgreSQL — no server needed)
+
+STEP 5: Create Supabase account
+───────────────────────────────
+  1. Go to https://supabase.com
+  2. Click "Start your project" → Sign in with GitHub
+  3. Click "New Project"
+     - Name: fx-crm
+     - Database Password: (save this somewhere safe!)
+     - Region: South Asia (Mumbai) 
+     - Click "Create new project"
+  4. Wait 2 minutes for it to set up
+
+STEP 6: Get your database URL
+──────────────────────────────
+  1. In Supabase dashboard → Settings → Database
+  2. Scroll to "Connection string" → URI
+  3. Copy it. It looks like:
+     postgresql://postgres.[ref]:[password]@aws-0-ap-south-1.pooler.supabase.com:6543/postgres
+  4. Replace [password] with your actual password
+
+STEP 7: Create database tables
+───────────────────────────────
+  1. In Supabase dashboard → SQL Editor
+  2. Click "New query"  
+  3. Copy ALL contents from "database/schema.sql" file
+  4. Paste into the SQL editor
+  5. Click "Run" (green play button)
+  6. You should see "Success. No rows returned" for each table
+
+STEP 8: Insert sample data
+───────────────────────────
+  1. Still in SQL Editor → New query
+  2. Copy ALL contents from "database/seed.sql" file
+  3. Paste and click "Run"
+
+════════════════════════════════════════════════════════════════
+HOUR 3-4: BACKEND API (11:00 AM - 1:00 PM)
+════════════════════════════════════════════════════════════════
+
+STEP 9: Set up backend
+──────────────────────
+  cd ../server      (go back to fx-crm/server)
+  npm init -y
+  npm install express pg cors dotenv helmet express-rate-limit jsonwebtoken bcryptjs multer
+
+STEP 10: Copy server files
+─────────────────────────
+  - Copy "server/index.js" to server/index.js
+  - Copy "server/.env.example" → rename to server/.env
+  - Edit .env with YOUR Supabase URL and a random JWT secret
+
+STEP 11: Test backend
+─────────────────────
+  node index.js
+  
+  → Should show: "FX CRM API running on port 4000"
+  → Open browser: http://localhost:4000/api/health
+  → Should show: {"status":"ok","timestamp":"..."}
+  → Ctrl+C to stop
+
+STEP 12: Connect frontend to backend
+─────────────────────────────────────
+  - Copy "client/src/api.js" to client/src/api.js
+  - The React app will now fetch real data from the API
+
+════════════════════════════════════════════════════════════════
+HOUR 5: DEPLOY FRONTEND TO VERCEL (2:00 PM - 2:30 PM)
+════════════════════════════════════════════════════════════════
+
+STEP 13: Deploy React app
+─────────────────────────
+  cd ../client
+  npm install -g vercel
+  vercel login          (use your email → verify via email link)
+  vercel
+  
+  It will ask:
+  → Set up and deploy? → Y
+  → Which scope? → (select your account)
+  → Link to existing project? → N  
+  → Project name? → fx-crm
+  → Directory? → ./
+  → Override settings? → N
+
+  Done! You get a URL like: https://fx-crm-xxxx.vercel.app
+
+STEP 14: Add custom domain
+───────────────────────────
+  1. Go to https://vercel.com/dashboard
+  2. Click on "fx-crm" project → Settings → Domains
+  3. Type: crm.fxconsulting.in → Click "Add"
+  4. It will show DNS instructions
+
+  In your domain registrar (where you bought fxconsulting.in):
+  → Go to DNS settings
+  → Add new record:
+     Type: CNAME
+     Name: crm
+     Value: cname.vercel-dns.com
+     TTL: 3600
+
+  5. Wait 5-10 minutes → Vercel auto-adds SSL
+  6. Visit https://crm.fxconsulting.in ✓
+
+════════════════════════════════════════════════════════════════
+HOUR 5-6: DEPLOY BACKEND TO RENDER (2:30 PM - 4:00 PM)
+════════════════════════════════════════════════════════════════
+
+STEP 15: Push to GitHub
+──────────────────────
+  cd ..   (back to fx-crm root)
+  git init
+  git add .
+  git commit -m "FX CRM initial build"
+  
+  Go to github.com → New repository → Name: fx-crm → Create
+  
+  git remote add origin https://github.com/YOUR-USERNAME/fx-crm.git
+  git push -u origin main
+
+STEP 16: Deploy backend to Render.com
+──────────────────────────────────────
+  1. Go to https://render.com → Sign up with GitHub
+  2. Click "New" → "Web Service"
+  3. Connect your fx-crm repository
+  4. Configure:
+     - Name: fx-crm-api
+     - Root Directory: server
+     - Runtime: Node
+     - Build Command: npm install
+     - Start Command: node index.js
+     - Instance Type: Free
+  5. Add Environment Variables (same as your .env):
+     - DATABASE_URL = your-supabase-url
+     - JWT_SECRET = your-secret
+     - FRONTEND_URL = https://crm.fxconsulting.in
+     - NODE_ENV = production
+  6. Click "Create Web Service"
+  7. Wait 3-5 minutes → You get: https://fx-crm-api.onrender.com
+
+STEP 17: Update frontend to use production API
+───────────────────────────────────────────────
+  In Vercel dashboard → fx-crm → Settings → Environment Variables:
+  Add: REACT_APP_API_URL = https://fx-crm-api.onrender.com
+
+  Then redeploy:
+  cd client
+  vercel --prod
+
+  (Or optionally point api.fxconsulting.in to Render)
+
+════════════════════════════════════════════════════════════════
+HOUR 7-8: WHATSAPP + GOOGLE MEET (4:00 PM - 6:00 PM)
+════════════════════════════════════════════════════════════════
+
+STEP 18: WhatsApp via Twilio (30 min)
+──────────────────────────────────────
+  1. Go to https://www.twilio.com/try-twilio → Sign up (free trial)
+  2. Verify your phone number
+  3. Go to Console → Messaging → Try WhatsApp
+  4. Follow sandbox setup (send "join xxxx" from your WhatsApp)
+  5. Copy from dashboard:
+     - Account SID
+     - Auth Token
+  6. Add to Render environment variables:
+     - TWILIO_SID = ACxxxxx
+     - TWILIO_TOKEN = xxxxx
+     - TWILIO_WHATSAPP = +14155238886
+
+STEP 19: Google Meet integration (30 min)
+─────────────────────────────────────────
+  1. Go to https://console.cloud.google.com
+  2. Create project: "FX CRM"
+  3. APIs & Services → Enable API:
+     - Google Calendar API
+  4. Credentials → Create Credentials → OAuth 2.0
+     - Application type: Web application
+     - Redirect URI: https://fx-crm-api.onrender.com/api/auth/google/callback
+  5. Download credentials → Add to Render env vars:
+     - GOOGLE_CLIENT_ID = xxxxx
+     - GOOGLE_CLIENT_SECRET = xxxxx
+
+════════════════════════════════════════════════════════════════
+DONE! YOUR CRM IS LIVE
+════════════════════════════════════════════════════════════════
+
+  Frontend: https://crm.fxconsulting.in
+  Backend:  https://fx-crm-api.onrender.com  
+  Database: Supabase (Mumbai region)
+
+  Monthly cost: ₹0 (all free tiers)
+  Upgrade later when traffic grows.
+
+════════════════════════════════════════════════════════════════
+TROUBLESHOOTING
+════════════════════════════════════════════════════════════════
+
+"npm command not found"
+→ Restart terminal after installing Node.js
+
+"vercel command not found"  
+→ Run: npm install -g vercel
+
+"CORS error in browser console"
+→ Check FRONTEND_URL in Render env matches your actual domain
+
+"Database connection failed"
+→ Check DATABASE_URL in .env has correct password
+→ Make sure Supabase project is active (not paused)
+
+"WhatsApp not sending"
+→ You must first join Twilio sandbox from your phone
+→ Free trial only sends to verified numbers
+
+"Site not loading on crm.fxconsulting.in"
+→ DNS takes 5-30 minutes to propagate
+→ Check CNAME record is correct in your registrar
