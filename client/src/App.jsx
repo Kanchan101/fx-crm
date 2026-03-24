@@ -257,7 +257,11 @@ const fmtL = n => `₹${(n/100000).toFixed(1)}L`;
 // ════════════════════════════════════════════════════════════════════════
 
 // ── COMMAND CENTER (Dashboard) ─────────────────────────────────────────
-const CommandCenter = ({ setPage }) => {
+const CommandCenter = ({ setPage, user, perms }) => {
+  const isRecruiter = user?.role === "Recruiter";
+  const myName = user?.name || "";
+  const myJobs = isRecruiter ? JOBS.filter(j => j.recruiter === myName || j.recruiter === user?.name) : JOBS;
+  const myPipeline = isRecruiter ? PIPELINE.filter(p => p.recruiter === myName) : PIPELINE;
   const totalRev = CLIENTS.reduce((s,c)=>s+c.revenue,0);
   const openReqs = JOBS.filter(j=>j.status==="Open").length;
   const totalPositions = JOBS.filter(j=>j.status==="Open").reduce((s,j)=>s+j.positions-j.filled,0);
@@ -312,10 +316,10 @@ const CommandCenter = ({ setPage }) => {
       {/* Today's Interviews */}
       <div style={{ background:C.card, borderRadius:14, padding:"20px 22px", border:`1px solid ${C.border}` }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
-          <span style={{ fontSize:12, fontWeight:700, color:C.textMuted, textTransform:"uppercase", letterSpacing:"0.06em" }}>Today's Interviews</span>
+          <span style={{ fontSize:12, fontWeight:700, color:C.textMuted, textTransform:"uppercase", letterSpacing:"0.06em" }}>{isRecruiter ? "My Interviews" : "Today's Interviews"}</span>
           <button onClick={()=>setPage("interviews")} style={{ fontSize:11, color:C.accentLight, background:"none", border:"none", cursor:"pointer", fontWeight:600 }}>View All →</button>
         </div>
-        {INTERVIEWS.filter(i=>i.date==="2026-03-25").map(i => (
+        {(isRecruiter ? INTERVIEWS.filter(i=>i.recruiter===myName) : INTERVIEWS.filter(i=>i.date==="2026-03-25")).map(i => (
           <div key={i.id} style={{ padding:"10px 0", borderBottom:`1px solid ${C.border}` }}>
             <div style={{ fontSize:12.5, color:C.text, fontWeight:600 }}>{i.candidate}</div>
             <div style={{ fontSize:11, color:C.textMuted }}>{i.job} • {i.time}</div>
@@ -325,30 +329,43 @@ const CommandCenter = ({ setPage }) => {
             </div>
           </div>
         ))}
+        {(isRecruiter ? INTERVIEWS.filter(i=>i.recruiter===myName) : INTERVIEWS.filter(i=>i.date==="2026-03-25")).length===0 && <div style={{fontSize:12,color:C.textDim,padding:10}}>No interviews</div>}
       </div>
 
-      {/* Critical Requirements */}
+      {/* My Assigned Positions / Critical Requirements */}
       <div style={{ background:C.card, borderRadius:14, padding:"20px 22px", border:`1px solid ${C.border}` }}>
-        <div style={{ fontSize:12, fontWeight:700, color:C.textMuted, marginBottom:14, textTransform:"uppercase", letterSpacing:"0.06em" }}>Critical Requirements</div>
-        {JOBS.filter(j=>j.priority==="Critical"&&j.status==="Open").map(j => (
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+          <span style={{ fontSize:12, fontWeight:700, color:C.textMuted, textTransform:"uppercase", letterSpacing:"0.06em" }}>{isRecruiter ? "My open positions" : "Critical requirements"}</span>
+          <button onClick={()=>setPage("jobs")} style={{ fontSize:11, color:C.accentLight, background:"none", border:"none", cursor:"pointer", fontWeight:600 }}>View All →</button>
+        </div>
+        {(isRecruiter ? myJobs.filter(j=>j.status==="Open") : JOBS.filter(j=>j.priority==="Critical"&&j.status==="Open")).map(j => (
           <div key={j.id} style={{ padding:"10px 0", borderBottom:`1px solid ${C.border}` }}>
             <div style={{ fontSize:12.5, color:C.text, fontWeight:600 }}>{j.title}</div>
-            <div style={{ fontSize:11, color:C.textMuted }}>{j.client} • {j.positions-j.filled} open</div>
+            <div style={{ fontSize:11, color:C.textMuted }}>{j.client} • {j.location} • {j.positions-j.filled} open</div>
             <div style={{ display:"flex", gap:6, marginTop:5 }}>
-              <Badge text="CRITICAL" color={C.red} />
-              <span style={{ fontSize:10, color:C.textDim }}>Due: {j.deadline}</span>
+              <Badge text={j.priority} color={j.priority==="Critical"?C.red:j.priority==="High"?C.yellow:C.accent} />
+              <span style={{ fontSize:10, color:C.textDim }}>{j.ctcRange}</span>
             </div>
           </div>
         ))}
+        {(isRecruiter ? myJobs.filter(j=>j.status==="Open") : JOBS.filter(j=>j.priority==="Critical"&&j.status==="Open")).length===0 && <div style={{fontSize:12,color:C.textDim,padding:10}}>No positions assigned</div>}
       </div>
 
-      {/* WhatsApp Activity */}
+      {/* My Pipeline / WhatsApp */}
       <div style={{ background:C.card, borderRadius:14, padding:"20px 22px", border:`1px solid ${C.border}` }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
-          <span style={{ fontSize:12, fontWeight:700, color:C.textMuted, textTransform:"uppercase", letterSpacing:"0.06em" }}>WhatsApp</span>
-          <button onClick={()=>setPage("whatsapp")} style={{ fontSize:11, color:C.whatsapp, background:"none", border:"none", cursor:"pointer", fontWeight:600 }}>Open →</button>
+          <span style={{ fontSize:12, fontWeight:700, color:C.textMuted, textTransform:"uppercase", letterSpacing:"0.06em" }}>{isRecruiter ? "My pipeline" : "WhatsApp"}</span>
+          <button onClick={()=>setPage(isRecruiter?"pipeline":"whatsapp")} style={{ fontSize:11, color:isRecruiter?C.accentLight:C.whatsapp, background:"none", border:"none", cursor:"pointer", fontWeight:600 }}>View All →</button>
         </div>
-        {WHATSAPP_THREADS.slice(0,4).map(t => (
+        {isRecruiter ? myPipeline.map(p => (
+          <div key={p.id} style={{ padding:"8px 0", borderBottom:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+            <div>
+              <div style={{ fontSize:12, color:C.text, fontWeight:600 }}>{p.candidate}</div>
+              <div style={{ fontSize:10.5, color:C.textMuted }}>{p.job} • {p.client}</div>
+            </div>
+            <Badge text={p.stage.replace(" Round","").replace("Submitted to ","→ ")} color={STAGE_CLR[p.stage]||C.textMuted} />
+          </div>
+        )) : WHATSAPP_THREADS.slice(0,4).map(t => (
           <div key={t.id} style={{ padding:"8px 0", borderBottom:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
             <div>
               <div style={{ fontSize:12, color:C.text, fontWeight:600 }}>{t.candidate}</div>
@@ -360,6 +377,7 @@ const CommandCenter = ({ setPage }) => {
             </div>
           </div>
         ))}
+        {isRecruiter && myPipeline.length===0 && <div style={{fontSize:12,color:C.textDim,padding:10}}>No candidates in pipeline</div>}
       </div>
     </div>
   </div>;
@@ -461,7 +479,7 @@ const CVHub = () => {
 };
 
 // ── CLIENTS ────────────────────────────────────────────────────────────
-const ClientsPage = () => {
+const ClientsPage = ({ perms }) => {
   const [search, setSearch] = useState(""); const [sel, setSel] = useState(null);
   const [tierFilter, setTierFilter] = useState("All");
   const f = CLIENTS.filter(c => {
@@ -474,7 +492,7 @@ const ClientsPage = () => {
         <SearchBox value={search} onChange={setSearch} placeholder="Search clients..." />
         {["All","Platinum","Gold","Silver"].map(t => <Pill key={t} text={t} active={tierFilter===t} onClick={()=>setTierFilter(t)} />)}
       </div>
-      <Btn icon={Icons.plus}>Add Client</Btn>
+      {perms?.canEditClients && <Btn icon={Icons.plus}>Add Client</Btn>}
     </div>
     <Table columns={[
       { label:"Company", render:r=><div><span style={{fontWeight:700,color:C.text}}>{r.name}</span><div style={{fontSize:10,color:C.textDim}}>{r.id}</div></div> },
@@ -502,7 +520,7 @@ const ClientsPage = () => {
 };
 
 // ── CANDIDATES ─────────────────────────────────────────────────────────
-const CandidatesPage = () => {
+const CandidatesPage = ({ perms }) => {
   const [search, setSearch] = useState(""); const [sel, setSel] = useState(null);
   const [statusF, setStatusF] = useState("All");
   const f = CANDIDATES.filter(c => {
@@ -515,7 +533,7 @@ const CandidatesPage = () => {
         <SearchBox value={search} onChange={setSearch} placeholder="Name, role, skills..." />
         {["All","Active","In Pipeline","Placed"].map(s => <Pill key={s} text={s} active={statusF===s} onClick={()=>setStatusF(s)} />)}
       </div>
-      <Btn icon={Icons.plus}>Add Candidate</Btn>
+      {perms?.canEditCandidates && <Btn icon={Icons.plus}>Add Candidate</Btn>}
     </div>
     <Table columns={[
       { label:"Name", render:r=><div><span style={{fontWeight:700,color:C.text}}>{r.name}</span>{r.linkedinUrl && <span style={{marginLeft:6,color:C.accent}}>{Icons.linkedin}</span>}{r.naukriId && <span style={{marginLeft:4,fontSize:9,color:"#5D5FEF",fontWeight:700}}>N</span>}</div> },
@@ -557,20 +575,27 @@ const CandidatesPage = () => {
 };
 
 // ── JOBS ────────────────────────────────────────────────────────────────
-const JobsPage = () => {
+const JobsPage = ({ user, perms }) => {
   const [search, setSearch] = useState(""); const [sel, setSel] = useState(null);
   const [statusF, setStatusF] = useState("Open");
-  const f = JOBS.filter(j => {
+  const [viewAll, setViewAll] = useState(user?.role === "Super Admin" || user?.role === "Account Manager");
+  const isRecruiter = user?.role === "Recruiter";
+  const allJobs = isRecruiter && !viewAll ? JOBS.filter(j => j.recruiter === user?.name) : JOBS;
+  const f = allJobs.filter(j => {
     const m = j.title.toLowerCase().includes(search.toLowerCase()) || j.client.toLowerCase().includes(search.toLowerCase());
     return m && (statusF==="All" || j.status===statusF);
   });
   return <div>
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18, gap:10, flexWrap:"wrap" }}>
-      <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
         <SearchBox value={search} onChange={setSearch} placeholder="Job or client..." />
-        {["All","Open","Closed"].map(s => <Pill key={s} text={s} active={statusF===s} onClick={()=>setStatusF(s)} />)}
+        {["All","Open","On Hold","Closed"].map(s => <Pill key={s} text={s} active={statusF===s} onClick={()=>setStatusF(s)} />)}
+        {isRecruiter && <Pill text={viewAll ? "All positions" : "My positions"} active={!viewAll} onClick={()=>setViewAll(p=>!p)} />}
       </div>
-      <Btn icon={Icons.plus}>Add Requirement</Btn>
+      <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+        {isRecruiter && <span style={{ fontSize:12, color:C.textMuted }}>{f.length} position{f.length!==1?"s":""} assigned</span>}
+        {perms?.canEditJobs && <Btn icon={Icons.plus}>Add Requirement</Btn>}
+      </div>
     </div>
     <Table columns={[
       { label:"ID", render:r=><span style={{color:C.textDim,fontSize:11}}>{r.id}</span> },
@@ -602,7 +627,7 @@ const JobsPage = () => {
 };
 
 // ── PIPELINE KANBAN ────────────────────────────────────────────────────
-const PipelinePage = () => {
+const PipelinePage = ({ user, perms }) => {
   const [pipeData, setPipeData] = useState(PIPELINE);
   const [sel, setSel] = useState(null);
   const move = (item, dir) => {
@@ -662,7 +687,7 @@ const PipelinePage = () => {
 };
 
 // ── INTERVIEWS ─────────────────────────────────────────────────────────
-const InterviewsPage = () => {
+const InterviewsPage = ({ user, perms }) => {
   const [sel, setSel] = useState(null);
   const [showSchedule, setShowSchedule] = useState(false);
   const grouped = {};
@@ -1017,7 +1042,7 @@ const PERMISSIONS = {
     canAddUsers: false, canDeleteAnything: false,
   },
   "Recruiter": {
-    pages: ["dashboard","cv","candidates","pipeline","interviews","whatsapp","sourcing"],
+    pages: ["dashboard","cv","candidates","jobs","pipeline","interviews","whatsapp","sourcing"],
     canEditClients: false, canEditJobs: false, canEditCandidates: true, canEditPipeline: true,
     canScheduleInterviews: true, canSendWhatsApp: true, canViewTeam: false, canViewReports: false,
     canAddUsers: false, canDeleteAnything: false,
@@ -1211,13 +1236,13 @@ export default function App() {
         {/* Content */}
         <div style={{ flex:1, overflow:"auto", padding:"22px 26px" }}>
           {!canView ? <NoAccess /> : <>
-            {page==="dashboard" && <CommandCenter setPage={setPage} />}
+            {page==="dashboard" && <CommandCenter setPage={setPage} user={user} perms={perms} />}
             {page==="cv" && <CVHub />}
-            {page==="clients" && <ClientsPage />}
-            {page==="candidates" && <CandidatesPage />}
-            {page==="jobs" && <JobsPage />}
-            {page==="pipeline" && <PipelinePage />}
-            {page==="interviews" && <InterviewsPage />}
+            {page==="clients" && <ClientsPage perms={perms} />}
+            {page==="candidates" && <CandidatesPage perms={perms} />}
+            {page==="jobs" && <JobsPage user={user} perms={perms} />}
+            {page==="pipeline" && <PipelinePage user={user} perms={perms} />}
+            {page==="interviews" && <InterviewsPage user={user} perms={perms} />}
             {page==="whatsapp" && <WhatsAppPage />}
             {page==="sourcing" && <SourcingPage />}
             {page==="team" && <TeamPage />}
