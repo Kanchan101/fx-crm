@@ -986,10 +986,126 @@ const ReportsPage = () => {
 };
 
 // ════════════════════════════════════════════════════════════════════════
+// AUTH & ROLES
+// ════════════════════════════════════════════════════════════════════════
+
+const USERS = [
+  { email: "kanchan.singh@fxconsulting.in", password: "Kanchan@FX2026", name: "Kanchan", role: "Super Admin", avatar: "KS", color: "#3B82F6" },
+  { email: "kavita.kaushik@fxconsulting.in", password: "Kavita@FX2026", name: "Kavita", role: "Account Manager", avatar: "KK", color: "#8B5CF6" },
+  { email: "abhishek@fxconsulting.in", password: "Abhishek@FX2026", name: "Abhishek", role: "Account Manager", avatar: "AJ", color: "#EC4899" },
+  { email: "radhika@fxconsulting.in", password: "Radhika@FX2026", name: "Radhika", role: "Account Manager", avatar: "RP", color: "#F59E0B" },
+  { email: "neha@fxconsulting.in", password: "Neha@FX2026", name: "Neha", role: "Account Manager", avatar: "NB", color: "#14B8A6" },
+  { email: "g.saurabh@fxconsulting.in", password: "Saurabh@FX2026", name: "Saurabh", role: "Recruiter", avatar: "SG", color: "#10B981" },
+  { email: "karan@fxconsulting.in", password: "Karan@FX2026", name: "Karan", role: "Recruiter", avatar: "KN", color: "#6366F1" },
+  { email: "bhumika@fxconsulting.in", password: "Bhumika@FX2026", name: "Bhumika", role: "Account Manager", avatar: "BD", color: "#D946EF" },
+  { email: "jyoti@fxconsulting.in", password: "Jyoti@FX2026", name: "Jyoti", role: "Recruiter", avatar: "JA", color: "#F97316" },
+  { email: "priya@fxconsulting.in", password: "Priya@FX2026", name: "Priya C", role: "Recruiter", avatar: "PC", color: "#EF4444" },
+];
+
+// Permissions: which roles can access which modules and actions
+const PERMISSIONS = {
+  "Super Admin": {
+    pages: ["dashboard","cv","clients","candidates","jobs","pipeline","interviews","whatsapp","sourcing","team","reports"],
+    canEditClients: true, canEditJobs: true, canEditCandidates: true, canEditPipeline: true,
+    canScheduleInterviews: true, canSendWhatsApp: true, canViewTeam: true, canViewReports: true,
+    canAddUsers: true, canDeleteAnything: true,
+  },
+  "Account Manager": {
+    pages: ["dashboard","clients","jobs","pipeline","interviews","candidates","whatsapp","team","reports"],
+    canEditClients: true, canEditJobs: true, canEditCandidates: false, canEditPipeline: true,
+    canScheduleInterviews: true, canSendWhatsApp: true, canViewTeam: true, canViewReports: true,
+    canAddUsers: false, canDeleteAnything: false,
+  },
+  "Recruiter": {
+    pages: ["dashboard","cv","candidates","pipeline","interviews","whatsapp","sourcing"],
+    canEditClients: false, canEditJobs: false, canEditCandidates: true, canEditPipeline: true,
+    canScheduleInterviews: true, canSendWhatsApp: true, canViewTeam: false, canViewReports: false,
+    canAddUsers: false, canDeleteAnything: false,
+  },
+};
+
+// ── Login Page ─────────────────────────────────────────────────────────
+const LoginPage = ({ onLogin }) => {
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [error, setError] = useState("");
+  const [showPass, setShowPass] = useState(false);
+
+  const handleLogin = () => {
+    const user = USERS.find(u => u.email.toLowerCase() === email.toLowerCase() && u.password === pass);
+    if (user) { setError(""); onLogin(user); }
+    else setError("Invalid email or password");
+  };
+
+  return (
+    <div style={{ minHeight:"100vh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:F.body }}>
+      <link href="https://fonts.googleapis.com/css2?family=Satoshi:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+      <link href="https://api.fontshare.com/v2/css?f[]=clash-display@400,500,600,700&display=swap" rel="stylesheet" />
+      <div style={{ width:400, padding:40, background:C.card, borderRadius:20, border:`1px solid ${C.border}`, boxShadow:"0 24px 80px rgba(0,0,0,.4)" }}>
+        <div style={{ textAlign:"center", marginBottom:32 }}>
+          <div style={{ width:56, height:56, borderRadius:14, background:`linear-gradient(135deg, ${C.accent}, #1E40AF)`, display:"inline-flex", alignItems:"center", justifyContent:"center", fontSize:20, fontWeight:900, color:"#fff", fontFamily:F.display, marginBottom:16 }}>FX</div>
+          <div style={{ fontSize:22, fontWeight:800, color:C.text, fontFamily:F.display, letterSpacing:"-0.02em" }}>FX Consulting</div>
+          <div style={{ fontSize:12, color:C.textDim, marginTop:4 }}>Recruitment CRM — fxconsulting.in</div>
+        </div>
+
+        <div style={{ marginBottom:16 }}>
+          <label style={{ display:"block", fontSize:12, color:C.textMuted, marginBottom:6, fontWeight:600 }}>Email</label>
+          <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="name@fxconsulting.in" onKeyDown={e=>e.key==="Enter"&&handleLogin()}
+            style={{ width:"100%", padding:"12px 14px", borderRadius:10, border:`1px solid ${C.border}`, background:C.surface, color:C.text, fontSize:14, fontFamily:F.body, outline:"none", boxSizing:"border-box" }}
+            onFocus={e=>e.target.style.borderColor=C.accent} onBlur={e=>e.target.style.borderColor=C.border} />
+        </div>
+
+        <div style={{ marginBottom:20 }}>
+          <label style={{ display:"block", fontSize:12, color:C.textMuted, marginBottom:6, fontWeight:600 }}>Password</label>
+          <div style={{ position:"relative" }}>
+            <input value={pass} onChange={e=>setPass(e.target.value)} type={showPass?"text":"password"} placeholder="Enter password" onKeyDown={e=>e.key==="Enter"&&handleLogin()}
+              style={{ width:"100%", padding:"12px 40px 12px 14px", borderRadius:10, border:`1px solid ${C.border}`, background:C.surface, color:C.text, fontSize:14, fontFamily:F.body, outline:"none", boxSizing:"border-box" }}
+              onFocus={e=>e.target.style.borderColor=C.accent} onBlur={e=>e.target.style.borderColor=C.border} />
+            <button onClick={()=>setShowPass(p=>!p)} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:C.textMuted, cursor:"pointer", fontSize:12 }}>{showPass?"Hide":"Show"}</button>
+          </div>
+        </div>
+
+        {error && <div style={{ padding:"10px 14px", borderRadius:8, background:C.red+"15", color:C.red, fontSize:13, marginBottom:16, fontWeight:500 }}>{error}</div>}
+
+        <button onClick={handleLogin}
+          style={{ width:"100%", padding:"13px", borderRadius:10, border:"none", background:C.accent, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:F.body, transition:"opacity .15s" }}
+          onMouseEnter={e=>e.target.style.opacity=0.9} onMouseLeave={e=>e.target.style.opacity=1}>
+          Sign In
+        </button>
+
+        <div style={{ marginTop:24, padding:16, borderRadius:10, background:C.surface, border:`1px solid ${C.border}` }}>
+          <div style={{ fontSize:11, color:C.textDim, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:8 }}>Role access</div>
+          <div style={{ fontSize:12, color:C.textMuted, lineHeight:1.6 }}>
+            <span style={{ color:C.accent, fontWeight:600 }}>Super Admin</span> — Full access to everything<br/>
+            <span style={{ color:C.purple, fontWeight:600 }}>Account Manager</span> — Clients, requirements, pipeline<br/>
+            <span style={{ color:C.green, fontWeight:600 }}>Recruiter</span> — CVs, candidates, interviews, pipeline
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ── Role Badge for header ──────────────────────────────────────────────
+const RoleBadge = ({ role }) => {
+  const colors = { "Super Admin": C.accent, "Account Manager": C.purple, "Recruiter": C.green };
+  return <span style={{ padding:"4px 10px", borderRadius:12, fontSize:10, fontWeight:700, background:(colors[role]||C.textMuted)+"18", color:colors[role]||C.textMuted, textTransform:"uppercase", letterSpacing:"0.04em" }}>{role}</span>;
+};
+
+// ── No Access Page ─────────────────────────────────────────────────────
+const NoAccess = () => (
+  <div style={{ textAlign:"center", padding:60 }}>
+    <div style={{ fontSize:40, marginBottom:12 }}>🔒</div>
+    <div style={{ fontSize:18, fontWeight:700, color:C.text, fontFamily:F.display, marginBottom:8 }}>Access restricted</div>
+    <div style={{ fontSize:14, color:C.textMuted }}>Your role doesn't have permission to view this page. Contact your admin.</div>
+  </div>
+);
+
+// ════════════════════════════════════════════════════════════════════════
 // MAIN APPLICATION
 // ════════════════════════════════════════════════════════════════════════
 
-const NAV = [
+const ALL_NAV = [
   { id:"dashboard", label:"Command Center", icon: Icons.dashboard },
   { id:"cv", label:"CV Processing", icon: Icons.cv },
   { id:"clients", label:"Clients", icon: Icons.clients },
@@ -1004,14 +1120,25 @@ const NAV = [
 ];
 
 export default function App() {
+  const [user, setUser] = useState(() => {
+    try { const s = localStorage.getItem("fx_user"); return s ? JSON.parse(s) : null; } catch { return null; }
+  });
   const [page, setPage] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
   const [time, setTime] = useState(new Date());
 
   useEffect(() => { const t = setInterval(()=>setTime(new Date()), 60000); return ()=>clearInterval(t); }, []);
 
-  const pageTitle = NAV.find(n=>n.id===page)?.label || "Command Center";
+  const handleLogin = (u) => { setUser(u); localStorage.setItem("fx_user", JSON.stringify(u)); };
+  const handleLogout = () => { setUser(null); localStorage.removeItem("fx_user"); setPage("dashboard"); };
+
+  if (!user) return <LoginPage onLogin={handleLogin} />;
+
+  const perms = PERMISSIONS[user.role] || PERMISSIONS["Recruiter"];
+  const NAV = ALL_NAV.filter(n => perms.pages.includes(n.id));
+  const pageTitle = ALL_NAV.find(n=>n.id===page)?.label || "Command Center";
   const unreadWA = WHATSAPP_THREADS.reduce((s,t)=>s+t.unread, 0);
+  const canView = perms.pages.includes(page);
 
   return (
     <div style={{ display:"flex", height:"100vh", background:C.bg, color:C.text, fontFamily:F.body, overflow:"hidden" }}>
@@ -1040,8 +1167,24 @@ export default function App() {
           ))}
         </nav>
 
+        {/* User info + Logout */}
+        <div style={{ borderTop:`1px solid ${C.border}`, padding:collapsed?"10px 6px":"12px 14px" }}>
+          {!collapsed && (
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+              <div style={{ width:32, height:32, borderRadius:16, background:user.color+"20", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:800, color:user.color, flexShrink:0 }}>{user.avatar}</div>
+              <div style={{ overflow:"hidden" }}>
+                <div style={{ fontSize:12.5, fontWeight:700, color:C.text, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{user.name}</div>
+                <RoleBadge role={user.role} />
+              </div>
+            </div>
+          )}
+          <button onClick={handleLogout} style={{ width:"100%", padding:"8px 12px", borderRadius:8, border:`1px solid ${C.border}`, background:"transparent", color:C.red, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:F.body, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+            {collapsed ? Icons.x : "Sign Out"}
+          </button>
+        </div>
+
         {/* Collapse */}
-        <button onClick={()=>setCollapsed(p=>!p)} style={{ padding:14, border:"none", background:"none", color:C.textDim, cursor:"pointer", borderTop:`1px solid ${C.border}`, display:"flex", justifyContent:"center" }}>
+        <button onClick={()=>setCollapsed(p=>!p)} style={{ padding:10, border:"none", background:"none", color:C.textDim, cursor:"pointer", borderTop:`1px solid ${C.border}`, display:"flex", justifyContent:"center" }}>
           <span style={{ transform:collapsed?"rotate(0deg)":"rotate(180deg)", transition:"transform .2s", display:"flex" }}>{Icons.chevR}</span>
         </button>
       </aside>
@@ -1052,31 +1195,34 @@ export default function App() {
         <header style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"13px 26px", borderBottom:`1px solid ${C.border}`, flexShrink:0, background:C.surface }}>
           <div>
             <h1 style={{ fontSize:20, fontWeight:700, color:C.text, margin:0, fontFamily:F.display, letterSpacing:"-0.02em" }}>{pageTitle}</h1>
-            <div style={{ fontSize:10.5, color:C.textDim, marginTop:2, fontWeight:500 }}>{time.toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"})} • 10,247 CVs processed this week</div>
+            <div style={{ fontSize:10.5, color:C.textDim, marginTop:2, fontWeight:500 }}>{time.toLocaleDateString("en-IN",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}</div>
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:14 }}>
+            <RoleBadge role={user.role} />
             <div style={{ padding:"7px 14px", borderRadius:8, background:C.greenGlow, display:"flex", alignItems:"center", gap:6, fontSize:11, color:C.green, fontWeight:700 }}>
               <div style={{ width:6, height:6, borderRadius:3, background:C.green, animation:"pulse 2s infinite" }}/>
               Live
             </div>
             <div style={{ position:"relative", cursor:"pointer", color:C.textMuted }}>{Icons.bell}<div style={{ position:"absolute", top:-2, right:-2, width:7, height:7, borderRadius:4, background:C.red }}/></div>
-            <div style={{ width:34, height:34, borderRadius:17, background:`linear-gradient(135deg, ${C.accent}, #1E40AF)`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:800, color:"#fff", fontFamily:F.display }}>K</div>
+            <div style={{ width:34, height:34, borderRadius:17, background:user.color+"25", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:800, color:user.color, fontFamily:F.display }}>{user.avatar}</div>
           </div>
         </header>
 
         {/* Content */}
         <div style={{ flex:1, overflow:"auto", padding:"22px 26px" }}>
-          {page==="dashboard" && <CommandCenter setPage={setPage} />}
-          {page==="cv" && <CVHub />}
-          {page==="clients" && <ClientsPage />}
-          {page==="candidates" && <CandidatesPage />}
-          {page==="jobs" && <JobsPage />}
-          {page==="pipeline" && <PipelinePage />}
-          {page==="interviews" && <InterviewsPage />}
-          {page==="whatsapp" && <WhatsAppPage />}
-          {page==="sourcing" && <SourcingPage />}
-          {page==="team" && <TeamPage />}
-          {page==="reports" && <ReportsPage />}
+          {!canView ? <NoAccess /> : <>
+            {page==="dashboard" && <CommandCenter setPage={setPage} />}
+            {page==="cv" && <CVHub />}
+            {page==="clients" && <ClientsPage />}
+            {page==="candidates" && <CandidatesPage />}
+            {page==="jobs" && <JobsPage />}
+            {page==="pipeline" && <PipelinePage />}
+            {page==="interviews" && <InterviewsPage />}
+            {page==="whatsapp" && <WhatsAppPage />}
+            {page==="sourcing" && <SourcingPage />}
+            {page==="team" && <TeamPage />}
+            {page==="reports" && <ReportsPage />}
+          </>}
         </div>
       </main>
 
