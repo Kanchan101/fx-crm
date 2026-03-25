@@ -93,7 +93,7 @@ router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), asyn
       const jobWithClient = { ...result, client_name: clientInfo.rows[0]?.name || '' };
       const members = await query('SELECT id, name, email FROM team WHERE id = ANY($1)', [assigned_team_ids]);
       members.rows.forEach(member => {
-        sendAssignmentEmail(member, jobWithClient, req.user.name).catch(console.error);
+        sendAssignmentEmail(member, jobWithClient, req.user.name, req.user.email).catch(console.error);
       });
     }
 
@@ -133,7 +133,7 @@ router.put('/:id', authenticate, authorize('Super Admin', 'Account Manager'), as
         const jobWithClient = { ...result, client_name: clientInfo.rows[0]?.name || '' };
         const members = await query('SELECT id, name, email FROM team WHERE id = ANY($1)', [newAssignees]);
         members.rows.forEach(member => {
-          sendAssignmentEmail(member, jobWithClient, req.user.name).catch(console.error);
+          sendAssignmentEmail(member, jobWithClient, req.user.name, req.user.email).catch(console.error);
         });
       }
     }

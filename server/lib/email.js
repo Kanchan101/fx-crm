@@ -1,16 +1,16 @@
 const { Resend } = require('resend');
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
-const FROM_EMAIL = process.env.FROM_EMAIL || 'FX CRM <onboarding@resend.dev>';
+// FROM_EMAIL is now dynamic — passed per function call
 
-async function sendAssignmentEmail(teamMember, job, assignedBy) {
+async function sendAssignmentEmail(teamMember, job, assignedBy, assignedByEmail) {
   if (!resend) {
     console.log('[Email] Resend not configured — skipping email to', teamMember.email);
     return;
   }
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: assignedByEmail ? `${assignedBy} <${assignedByEmail}>` : "FX CRM <notifications@fxconsulting.in>",
       to: teamMember.email,
       subject: `New Assignment: ${job.title} — ${job.client_name}`,
       html: `
@@ -45,11 +45,11 @@ async function sendAssignmentEmail(teamMember, job, assignedBy) {
   }
 }
 
-async function sendStatusChangeEmail(teamMember, candidate, job, oldStatus, newStatus, changedBy) {
+async function sendStatusChangeEmail(teamMember, candidate, job, oldStatus, newStatus, changedBy, changedByEmail) {
   if (!resend) return;
   try {
     await resend.emails.send({
-      from: FROM_EMAIL,
+      from: changedByEmail ? `${changedBy} <${changedByEmail}>` : "FX CRM <notifications@fxconsulting.in>",
       to: teamMember.email,
       subject: `Status Update: ${candidate.name} → ${newStatus}`,
       html: `
