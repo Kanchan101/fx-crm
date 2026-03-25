@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+
+:root {
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --sidebar-width: 260px;
+  --header-height: 64px;
+}
+
+* { font-family: var(--font-sans); }
+body { @apply bg-gray-50 text-gray-900 antialiased; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { @apply bg-transparent; }
+::-webkit-scrollbar-thumb { @apply bg-gray-300 rounded-full; }
+::-webkit-scrollbar-thumb:hover { @apply bg-gray-400; }
+.sidebar-scroll::-webkit-scrollbar-thumb { @apply bg-white/10 rounded-full; }
+
+.page-enter { animation: fadeIn 0.2s ease-out; }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+input:focus, select:focus, textarea:focus, button:focus-visible {
+  @apply outline-none ring-2 ring-fx-500/40 ring-offset-1;
+}
+
+.badge { @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium; }
+.badge-platinum { @apply bg-violet-100 text-violet-800; }
+.badge-gold { @apply bg-amber-100 text-amber-800; }
+.badge-silver { @apply bg-gray-100 text-gray-700; }
+.badge-critical { @apply bg-red-100 text-red-700; }
+.badge-high { @apply bg-orange-100 text-orange-700; }
+.badge-medium { @apply bg-blue-100 text-blue-700; }
+.badge-low { @apply bg-green-100 text-green-700; }
+.badge-open { @apply bg-emerald-100 text-emerald-700; }
+.badge-closed { @apply bg-gray-100 text-gray-600; }
+.badge-onhold { @apply bg-yellow-100 text-yellow-700; }
