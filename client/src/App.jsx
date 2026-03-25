@@ -1091,7 +1091,7 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
       </div>}
 
       <div style={{ display:"flex", justifyContent:"flex-end", marginTop:16, gap:8 }}>
-        {parseStatus!==="done" && parseStatus!=="partial" && <Btn variant="secondary" onClick={()=>setStep(2)}>Skip — enter manually</Btn>}
+        {parseStatus!=="done" && parseStatus!=="partial" && <Btn variant="secondary" onClick={()=>setStep(2)}>Skip — enter manually</Btn>}
         {(parseStatus==="done" || parseStatus==="partial") && <Btn onClick={()=>setStep(2)}>Next — select role & review</Btn>}
       </div>
     </div>}
