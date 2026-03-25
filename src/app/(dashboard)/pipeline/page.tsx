@@ -8,15 +8,15 @@ import { Kanban, Search, MapPin } from 'lucide-react';
 import clsx from 'clsx';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-const STATUSES = ['New','Screening','Submitted to Client','Client Review','Interview Stage','HR Discussion','Offer','Joined','Not Joined','Account Manager Rejected'];
+const STATUSES = ['New','Screening','Submitted to Client','Client Review','Interview Stage','HR Discussion','Offer','Joined','Not Joined','Account Manager Rejected','Interview Reject'];
 const SHORT_LABELS: Record<string, string> = {
   'New':'New','Screening':'Screening','Submitted to Client':'Submitted','Client Review':'Client Review',
-  'Interview Stage':'Interview','HR Discussion':'HR','Offer':'Offer','Joined':'Joined','Not Joined':'Not Joined','Account Manager Rejected':'AM Rejected'
+  'Interview Stage':'Interview','HR Discussion':'HR','Offer':'Offer','Joined':'Joined','Not Joined':'Not Joined','Account Manager Rejected':'AM Rejected','Interview Reject':'Int. Reject'
 };
 const COL_COLORS: Record<string, string> = {
   'New':'border-t-gray-400','Screening':'border-t-blue-400','Submitted to Client':'border-t-indigo-400',
   'Client Review':'border-t-purple-400','Interview Stage':'border-t-orange-400','HR Discussion':'border-t-amber-400',
-  'Offer':'border-t-emerald-400','Joined':'border-t-green-500','Not Joined':'border-t-red-400','Account Manager Rejected':'border-t-rose-500'
+  'Offer':'border-t-emerald-400','Joined':'border-t-green-500','Not Joined':'border-t-red-400','Account Manager Rejected':'border-t-rose-500','Interview Reject':'border-t-pink-400'
 };
 
 interface PipelineEntry {

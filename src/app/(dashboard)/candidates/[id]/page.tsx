@@ -16,7 +16,7 @@ const STATUS_COLORS: Record<string, string> = {
   'Submitted to Client': 'bg-indigo-100 text-indigo-700', 'Client Review': 'bg-purple-100 text-purple-700',
   'Interview Stage': 'bg-orange-100 text-orange-700', 'HR Discussion': 'bg-amber-100 text-amber-700',
   'Offer': 'bg-emerald-100 text-emerald-700', 'Joined': 'bg-green-100 text-green-700',
-  'Not Joined': 'bg-red-100 text-red-700', 'Account Manager Rejected': 'bg-rose-100 text-rose-700',
+  'Not Joined': 'bg-red-100 text-red-700', 'Account Manager Rejected': 'bg-rose-100 text-rose-700', 'Interview Reject': 'bg-pink-100 text-pink-700',
 };
 
 export default function CandidateDetailPage() {

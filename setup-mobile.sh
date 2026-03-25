@@ -1,3 +1,102 @@
+#!/bin/bash
+# FX CRM — Mobile Responsive Sidebar
+# Run from: cd /Users/kanchankuwarbi/Downloads/fx-crm && bash setup-mobile.sh
+
+set -e
+echo "🚀 FX CRM — Mobile Responsive Sidebar"
+echo ""
+
+# ========================
+# FRONTEND: Dashboard layout with mobile support
+# ========================
+cat > "src/app/(dashboard)/layout.tsx" << 'ENDOFFILE'
+'use client';
+
+import { useEffect, useState, createContext } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import Sidebar from '@/components/Sidebar';
+import Header from '@/components/Header';
+
+export const SidebarContext = createContext({
+  collapsed: false,
+  setCollapsed: (v: boolean) => {},
+  mobileOpen: false,
+  setMobileOpen: (v: boolean) => {},
+});
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  const router = useRouter();
+  const pathname = usePathname();
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    if (!loading && !user) router.replace('/login');
+  }, [user, loading, router]);
+
+  // Close mobile sidebar on route change
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
+  // Close mobile sidebar on escape key
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileOpen(false);
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, []);
+
+  // Prevent body scroll when mobile sidebar is open
+  useEffect(() => {
+    if (mobileOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [mobileOpen]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-2 border-fx-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-gray-400">Loading CRM...</p>
+        </div>
+      </div>
+    );
+  }
+  if (!user) return null;
+
+  return (
+    <SidebarContext.Provider value={{ collapsed, setCollapsed, mobileOpen, setMobileOpen }}>
+      <div className="min-h-screen bg-gray-50">
+        {/* Mobile overlay */}
+        {mobileOpen && (
+          <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setMobileOpen(false)} />
+        )}
+
+        <Sidebar />
+
+        <div className={`lg:${collapsed ? 'pl-[72px]' : 'pl-[260px]'} transition-all duration-300`}>
+          <Header />
+          <main className="p-4 sm:p-6 page-enter">{children}</main>
+        </div>
+      </div>
+    </SidebarContext.Provider>
+  );
+}
+ENDOFFILE
+echo "✅ src/app/(dashboard)/layout.tsx (mobile support)"
+
+# ========================
+# FRONTEND: Sidebar with mobile hamburger
+# ========================
+cat > src/components/Sidebar.tsx << 'ENDOFFILE'
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
@@ -153,3 +252,122 @@ export default function Sidebar() {
     </>
   );
 }
+ENDOFFILE
+echo "✅ src/components/Sidebar.tsx (desktop + mobile)"
+
+# ========================
+# FRONTEND: Header with hamburger menu
+# ========================
+cat > src/components/Header.tsx << 'ENDOFFILE'
+'use client';
+
+import { usePathname } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import { useContext } from 'react';
+import { SidebarContext } from '@/app/(dashboard)/layout';
+import { Search, Bell, Menu } from 'lucide-react';
+
+const PAGE_TITLES: Record<string, string> = {
+  '/dashboard': 'Dashboard', '/requirements': 'Requirements', '/candidates': 'Candidates',
+  '/clients': 'Clients', '/pipeline': 'Pipeline', '/interviews': 'Interviews',
+  '/reports': 'Reports', '/team': 'Team Management',
+};
+
+export default function Header() {
+  const pathname = usePathname();
+  const { user } = useAuth();
+
+  let setMobileOpen = (v: boolean) => {};
+  try {
+    const ctx = useContext(SidebarContext);
+    setMobileOpen = ctx.setMobileOpen;
+  } catch {}
+
+  const title = PAGE_TITLES[pathname] || PAGE_TITLES['/' + pathname.split('/')[1]] || 'FX CRM';
+  const greeting = () => {
+    const h = new Date().getHours();
+    return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+  };
+
+  return (
+    <header className="h-14 sm:h-16 bg-white border-b border-gray-100 flex items-center justify-between px-4 sm:px-6 sticky top-0 z-30">
+      <div className="flex items-center gap-3">
+        {/* Hamburger — mobile only */}
+        <button onClick={() => setMobileOpen(true)}
+          className="w-9 h-9 rounded-lg bg-gray-50 hover:bg-gray-100 flex items-center justify-center lg:hidden">
+          <Menu className="w-5 h-5 text-gray-600" />
+        </button>
+        <div>
+          <h1 className="text-base sm:text-lg font-semibold text-gray-900">{title}</h1>
+          <p className="text-xs text-gray-400 -mt-0.5 hidden sm:block">{greeting()}, {user?.name?.split(' ')[0]}</p>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 sm:gap-3">
+        {/* Search — hidden on very small screens */}
+        <div className="hidden sm:flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg border border-gray-100 hover:border-gray-200 transition-colors w-48 md:w-64">
+          <Search className="w-4 h-4 text-gray-400" />
+          <input type="text" placeholder="Search..."
+            className="bg-transparent text-sm outline-none flex-1 placeholder:text-gray-300" />
+        </div>
+        {/* Mobile search icon */}
+        <button className="sm:hidden w-9 h-9 rounded-lg bg-gray-50 hover:bg-gray-100 flex items-center justify-center">
+          <Search className="w-4 h-4 text-gray-500" />
+        </button>
+        <button className="relative w-9 h-9 rounded-lg bg-gray-50 hover:bg-gray-100 flex items-center justify-center">
+          <Bell className="w-4 h-4 text-gray-500" />
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />
+        </button>
+      </div>
+    </header>
+  );
+}
+ENDOFFILE
+echo "✅ src/components/Header.tsx (with hamburger)"
+
+# ========================
+# FRONTEND: Add responsive CSS
+# ========================
+cat >> src/app/globals.css << 'ENDOFFILE'
+
+/* Mobile responsive overrides */
+@media (max-width: 1023px) {
+  .pl-\[260px\], .pl-\[72px\] {
+    padding-left: 0 !important;
+  }
+}
+
+/* Kanban horizontal scroll on mobile */
+@media (max-width: 640px) {
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Touch-friendly targets on mobile */
+@media (max-width: 640px) {
+  button, a, select {
+    min-height: 36px;
+  }
+}
+ENDOFFILE
+echo "✅ src/app/globals.css (responsive additions)"
+
+echo ""
+echo "=========================================="
+echo "🎉 Mobile responsive update complete!"
+echo "=========================================="
+echo ""
+echo "Changes:"
+echo "  ✓ Hamburger menu icon in header (visible on mobile/tablet)"
+echo "  ✓ Mobile sidebar slides in from left with overlay backdrop"
+echo "  ✓ Sidebar auto-closes on navigation + Escape key"
+echo "  ✓ Body scroll locked when mobile sidebar is open"
+echo "  ✓ Content area takes full width on mobile (no left padding)"
+echo "  ✓ Header compact on mobile, search icon replaces search bar"
+echo "  ✓ Touch-friendly tap targets on small screens"
+echo "  ✓ Desktop sidebar collapse still works as before"
+echo ""
+echo "No backend restart needed. Deploy:"
+echo "  git add . && git commit -m 'Mobile responsive sidebar' && git push"
+echo ""

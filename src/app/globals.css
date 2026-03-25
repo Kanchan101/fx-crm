@@ -40,3 +40,24 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
 .badge-open { @apply bg-emerald-100 text-emerald-700; }
 .badge-closed { @apply bg-gray-100 text-gray-600; }
 .badge-onhold { @apply bg-yellow-100 text-yellow-700; }
+
+/* Mobile responsive overrides */
+@media (max-width: 1023px) {
+  .pl-\[260px\], .pl-\[72px\] {
+    padding-left: 0 !important;
+  }
+}
+
+/* Kanban horizontal scroll on mobile */
+@media (max-width: 640px) {
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Touch-friendly targets on mobile */
+@media (max-width: 640px) {
+  button, a, select {
+    min-height: 36px;
+  }
+}

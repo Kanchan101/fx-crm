@@ -14,26 +14,26 @@ const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 const PIPELINE_STATUSES = [
   'New','Screening','Submitted to Client','Client Review',
-  'Interview Stage','HR Discussion','Offer','Joined','Not Joined','Account Manager Rejected'
+  'Interview Stage','HR Discussion','Offer','Joined','Not Joined','Account Manager Rejected','Interview Reject'
 ];
 
 const ACTIVE_STATUSES = ['Screening', 'Submitted to Client', 'Client Review', 'Interview Stage', 'HR Discussion', 'Offer'];
 const SELECTED_STATUSES = ['Joined'];
-const NOT_SELECTED_STATUSES = ['Not Joined', 'Account Manager Rejected'];
+const NOT_SELECTED_STATUSES = ['Not Joined', 'Account Manager Rejected', 'Interview Reject'];
 
 const STATUS_COLORS: Record<string, string> = {
   'New':'bg-gray-100 border-gray-200','Screening':'bg-blue-50 border-blue-200',
   'Submitted to Client':'bg-indigo-50 border-indigo-200','Client Review':'bg-purple-50 border-purple-200',
   'Interview Stage':'bg-orange-50 border-orange-200','HR Discussion':'bg-amber-50 border-amber-200',
   'Offer':'bg-emerald-50 border-emerald-200','Joined':'bg-green-50 border-green-200',
-  'Not Joined':'bg-red-50 border-red-200','Account Manager Rejected':'bg-rose-50 border-rose-200',
+  'Not Joined':'bg-red-50 border-red-200','Account Manager Rejected':'bg-rose-50 border-rose-200','Interview Reject':'bg-pink-50 border-pink-200',
 };
 
 const STATUS_TEXT_COLORS: Record<string, string> = {
   'New':'text-gray-700','Screening':'text-blue-700','Submitted to Client':'text-indigo-700',
   'Client Review':'text-purple-700','Interview Stage':'text-orange-700','HR Discussion':'text-amber-700',
   'Offer':'text-emerald-700','Joined':'text-green-700','Not Joined':'text-red-700',
-  'Account Manager Rejected':'text-rose-700',
+  'Account Manager Rejected':'text-rose-700','Interview Reject':'text-pink-700',
 };
 
 interface PipelineEntry {

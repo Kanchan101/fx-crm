@@ -1,3 +1,259 @@
+#!/bin/bash
+# FX CRM Fix — Clickable candidates everywhere + Interview Reject status
+# Run from: cd /Users/kanchankuwarbi/Downloads/fx-crm && bash fix-clickable.sh
+
+set -e
+echo "🔧 Fixing clickable candidates + adding Interview Reject status"
+echo ""
+
+# ========================
+# BACKEND: Add Interview Reject to pipeline status check
+# ========================
+cat > server/routes/pipeline.js << 'ENDOFFILE'
+const express = require('express');
+const { query } = require('../db');
+const { authenticate } = require('../middleware/auth');
+
+const router = express.Router();
+
+router.get('/', authenticate, async (req, res) => {
+  try {
+    const { status, job_id, owner, search } = req.query;
+    let sql = `
+      SELECT p.*,
+        ca.name as candidate_name, ca.email as candidate_email, ca.phone as candidate_phone,
+        ca.location as candidate_location, ca.experience_years, ca.skills as candidate_skills,
+        ca."current_role" as candidate_role, ca.current_company,
+        ca.assessment_soft_skills, ca.assessment_stability, ca.assessment_technical, ca.assessment_experience,
+        j.title as job_title, j.location as job_location, j.priority as job_priority,
+        cl.name as client_name, cl.tier as client_tier,
+        t.name as owner_name
+      FROM pipeline p
+      JOIN candidates ca ON ca.id = p.candidate_id
+      JOIN jobs j ON j.id = p.job_id
+      JOIN clients cl ON cl.id = j.client_id
+      LEFT JOIN team t ON t.id = ca.owner_id
+      WHERE 1=1
+    `;
+    const params = [];
+    let idx = 1;
+    if (status && status !== 'All') { sql += ` AND p.status = $${idx++}`; params.push(status); }
+    if (job_id) { sql += ` AND p.job_id = $${idx++}`; params.push(job_id); }
+    if (owner === 'mine') { sql += ` AND ca.owner_id = $${idx++}`; params.push(req.user.id); }
+    if (search) {
+      sql += ` AND (LOWER(ca.name) LIKE $${idx} OR LOWER(j.title) LIKE $${idx} OR LOWER(cl.name) LIKE $${idx})`;
+      params.push(`%${search.toLowerCase()}%`); idx++;
+    }
+    sql += ' ORDER BY p.updated_at DESC';
+    const result = await query(sql, params);
+    res.json({ pipeline: result.rows });
+  } catch (err) {
+    console.error('List pipeline error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.patch('/:id/status', authenticate, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const validStatuses = [
+      'New','Screening','Submitted to Client','Client Review',
+      'Interview Stage','HR Discussion','Offer','Joined',
+      'Not Joined','Account Manager Rejected','Interview Reject'
+    ];
+    if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    const current = await query('SELECT * FROM pipeline WHERE id = $1', [req.params.id]);
+    if (current.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const old = current.rows[0].status;
+    await query('UPDATE pipeline SET status=$1, updated_by=$2, updated_at=NOW() WHERE id=$3', [status, req.user.id, req.params.id]);
+    await query(
+      'INSERT INTO candidate_status_history (pipeline_id, candidate_id, job_id, old_status, new_status, changed_by) VALUES ($1,$2,$3,$4,$5,$6)',
+      [req.params.id, current.rows[0].candidate_id, current.rows[0].job_id, old, status, req.user.id]
+    );
+    await query(
+      'INSERT INTO activity_log (user_id, action, entity_type, entity_id, details) VALUES ($1,$2,$3,$4,$5)',
+      [req.user.id, 'STATUS_CHANGE', 'pipeline', req.params.id, JSON.stringify({ from: old, to: status })]
+    );
+    res.json({ message: 'Updated', old_status: old, new_status: status });
+  } catch (err) {
+    console.error('Update status error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+module.exports = router;
+ENDOFFILE
+echo "✅ server/routes/pipeline.js (added Interview Reject)"
+
+# Also update requirements route to accept Interview Reject
+cat > server/routes/requirements.js << 'ENDOFFILE'
+const express = require('express');
+const { query, transaction } = require('../db');
+const { authenticate, authorize } = require('../middleware/auth');
+
+const router = express.Router();
+
+router.get('/', authenticate, async (req, res) => {
+  try {
+    const { status, priority, client_id, search, my_positions, sort_by, sort_order } = req.query;
+    let sql = `
+      SELECT j.*,
+        c.name as client_name, c.tier as client_tier, c.location as client_location,
+        c.domain as client_domain, c.fee_percent as client_fee_percent, c.spoc_name as client_spoc,
+        (SELECT COUNT(*) FROM pipeline p WHERE p.job_id = j.id) as total_candidates,
+        (SELECT COUNT(*) FROM pipeline p WHERE p.job_id = j.id AND p.status NOT IN ('Account Manager Rejected','Not Joined','Interview Reject')) as active_candidates,
+        (SELECT COUNT(*) FROM job_assignments ja WHERE ja.job_id = j.id) as assigned_count,
+        t.name as created_by_name
+      FROM jobs j JOIN clients c ON c.id = j.client_id LEFT JOIN team t ON t.id = j.created_by WHERE 1=1
+    `;
+    const params = []; let idx = 1;
+    if (status && status !== 'All') { sql += ` AND j.status = $${idx++}`; params.push(status); }
+    if (priority && priority !== 'All') { sql += ` AND j.priority = $${idx++}`; params.push(priority); }
+    if (client_id) { sql += ` AND j.client_id = $${idx++}`; params.push(client_id); }
+    if (search) { sql += ` AND (LOWER(j.title) LIKE $${idx} OR LOWER(c.name) LIKE $${idx} OR LOWER(j.location) LIKE $${idx})`; params.push(`%${search.toLowerCase()}%`); idx++; }
+    if (my_positions === 'true') { sql += ` AND EXISTS (SELECT 1 FROM job_assignments ja WHERE ja.job_id = j.id AND ja.team_member_id = $${idx++})`; params.push(req.user.id); }
+    const validSorts = ['title','priority','status','created_at','deadline'];
+    const sortCol = validSorts.includes(sort_by) ? sort_by : 'created_at';
+    sql += ` ORDER BY j.${sortCol} ${sort_order === 'asc' ? 'ASC' : 'DESC'}`;
+    const result = await query(sql, params);
+    const jobIds = result.rows.map(r => r.id);
+    let assignments = [];
+    if (jobIds.length > 0) {
+      const ar = await query('SELECT ja.job_id, ja.team_member_id, t.name, t.role, t.email FROM job_assignments ja JOIN team t ON t.id = ja.team_member_id WHERE ja.job_id = ANY($1)', [jobIds]);
+      assignments = ar.rows;
+    }
+    const jobs = result.rows.map(job => ({ ...job, assigned_team: assignments.filter(a => a.job_id === job.id) }));
+    res.json({ requirements: jobs, total: jobs.length });
+  } catch (err) { console.error('List requirements error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+router.get('/:id', authenticate, async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT j.*, c.name as client_name, c.tier as client_tier, c.location as client_location,
+        c.domain as client_domain, c.fee_percent as client_fee_percent,
+        c.spoc_name as client_spoc, c.spoc_email as client_spoc_email,
+        c.spoc_phone as client_spoc_phone, c.industry as client_industry,
+        t.name as created_by_name
+       FROM jobs j JOIN clients c ON c.id = j.client_id LEFT JOIN team t ON t.id = j.created_by WHERE j.id = $1`, [req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const assignments = await query('SELECT ja.team_member_id, t.name, t.role, t.email, ja.assigned_at FROM job_assignments ja JOIN team t ON t.id = ja.team_member_id WHERE ja.job_id = $1 ORDER BY ja.assigned_at', [req.params.id]);
+    const pipeline = await query(
+      `SELECT p.*, ca.name as candidate_name, ca.email as candidate_email,
+        ca.phone as candidate_phone, ca.location as candidate_location,
+        ca.experience_years, ca.skills as candidate_skills,
+        ca."current_role" as candidate_current_role, ca.current_company as candidate_company,
+        ca.assessment_soft_skills, ca.assessment_stability,
+        ca.assessment_technical, ca.assessment_experience,
+        t.name as owner_name
+       FROM pipeline p JOIN candidates ca ON ca.id = p.candidate_id
+       LEFT JOIN team t ON t.id = ca.owner_id WHERE p.job_id = $1 ORDER BY p.updated_at DESC`, [req.params.id]
+    );
+    res.json({ requirement: result.rows[0], assigned_team: assignments.rows, pipeline: pipeline.rows });
+  } catch (err) { console.error('Get requirement error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), async (req, res) => {
+  try {
+    const { title, client_id, location, type, ctc_min, ctc_max, exp_min, exp_max, description, skills, priority, deadline, positions_count, internal_notes, assigned_team_ids } = req.body;
+    if (!title || !client_id) return res.status(400).json({ error: 'Title and client required' });
+    const result = await transaction(async (client) => {
+      const jr = await client.query(
+        `INSERT INTO jobs (title,client_id,location,type,ctc_min,ctc_max,exp_min,exp_max,description,skills,priority,deadline,positions_count,internal_notes,created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+        [title,client_id,location,type||'Full Time',ctc_min||0,ctc_max||0,exp_min||0,exp_max||0,description,skills,priority||'Medium',deadline||null,positions_count||1,internal_notes,req.user.id]
+      );
+      const job = jr.rows[0];
+      if (assigned_team_ids && assigned_team_ids.length > 0) {
+        for (const mid of assigned_team_ids) {
+          await client.query('INSERT INTO job_assignments (job_id,team_member_id,assigned_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [job.id,mid,req.user.id]);
+        }
+      }
+      await client.query('INSERT INTO activity_log (user_id,action,entity_type,entity_id,details) VALUES ($1,$2,$3,$4,$5)', [req.user.id,'CREATE','requirement',job.id,JSON.stringify({title})]);
+      return job;
+    });
+    res.status(201).json({ requirement: result });
+  } catch (err) { console.error('Create requirement error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+router.put('/:id', authenticate, authorize('Super Admin', 'Account Manager'), async (req, res) => {
+  try {
+    const { title, client_id, location, type, ctc_min, ctc_max, exp_min, exp_max, description, skills, priority, deadline, positions_count, status, internal_notes, assigned_team_ids } = req.body;
+    const result = await transaction(async (client) => {
+      const jr = await client.query(
+        `UPDATE jobs SET title=$1,client_id=$2,location=$3,type=$4,ctc_min=$5,ctc_max=$6,exp_min=$7,exp_max=$8,description=$9,skills=$10,priority=$11,deadline=$12,positions_count=$13,status=$14,internal_notes=$15,updated_at=NOW() WHERE id=$16 RETURNING *`,
+        [title,client_id,location,type,ctc_min||0,ctc_max||0,exp_min||0,exp_max||0,description,skills,priority,deadline||null,positions_count||1,status||'Open',internal_notes,req.params.id]
+      );
+      if (jr.rows.length === 0) throw new Error('Not found');
+      if (assigned_team_ids !== undefined) {
+        await client.query('DELETE FROM job_assignments WHERE job_id = $1', [req.params.id]);
+        for (const mid of assigned_team_ids) {
+          await client.query('INSERT INTO job_assignments (job_id,team_member_id,assigned_by) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [req.params.id,mid,req.user.id]);
+        }
+      }
+      await client.query('INSERT INTO activity_log (user_id,action,entity_type,entity_id,details) VALUES ($1,$2,$3,$4,$5)', [req.user.id,'UPDATE','requirement',req.params.id,JSON.stringify({title})]);
+      return jr.rows[0];
+    });
+    res.json({ requirement: result });
+  } catch (err) {
+    if (err.message === 'Not found') return res.status(404).json({ error: 'Not found' });
+    console.error('Update requirement error:', err); res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.patch('/:id/pipeline/:pipelineId/status', authenticate, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const validStatuses = [
+      'New','Screening','Submitted to Client','Client Review',
+      'Interview Stage','HR Discussion','Offer','Joined',
+      'Not Joined','Account Manager Rejected','Interview Reject'
+    ];
+    if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    const current = await query('SELECT * FROM pipeline WHERE id = $1 AND job_id = $2', [req.params.pipelineId, req.params.id]);
+    if (current.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    const old = current.rows[0].status;
+    await query('UPDATE pipeline SET status=$1, updated_by=$2, updated_at=NOW() WHERE id=$3', [status, req.user.id, req.params.pipelineId]);
+    await query('INSERT INTO candidate_status_history (pipeline_id,candidate_id,job_id,old_status,new_status,changed_by) VALUES ($1,$2,$3,$4,$5,$6)',
+      [req.params.pipelineId, current.rows[0].candidate_id, req.params.id, old, status, req.user.id]);
+    await query('INSERT INTO activity_log (user_id,action,entity_type,entity_id,details) VALUES ($1,$2,$3,$4,$5)',
+      [req.user.id, 'STATUS_CHANGE', 'pipeline', req.params.pipelineId, JSON.stringify({ from: old, to: status })]);
+    res.json({ message: 'Updated', old_status: old, new_status: status });
+  } catch (err) { console.error('Update pipeline status error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+module.exports = router;
+ENDOFFILE
+echo "✅ server/routes/requirements.js (Interview Reject added)"
+
+# ========================
+# DB: Allow Interview Reject in pipeline status constraint
+# ========================
+cat > /tmp/fix-status.js << 'ENDOFFILE'
+require('dotenv').config();
+const { pool, query } = require('./db');
+async function fix() {
+  try {
+    await query('ALTER TABLE pipeline DROP CONSTRAINT IF EXISTS pipeline_status_check');
+    await query(`ALTER TABLE pipeline ADD CONSTRAINT pipeline_status_check CHECK (status IN (
+      'New','Screening','Submitted to Client','Client Review',
+      'Interview Stage','HR Discussion','Offer','Joined',
+      'Not Joined','Account Manager Rejected','Interview Reject'
+    ))`);
+    console.log('✅ Interview Reject status added to DB');
+  } catch (err) { console.error('DB fix error:', err.message); }
+  await pool.end();
+}
+fix();
+ENDOFFILE
+cp /tmp/fix-status.js server/fix-status.js
+echo "✅ server/fix-status.js created"
+
+# ========================
+# FRONTEND: Candidates list — clickable names
+# ========================
+cat > "src/app/(dashboard)/candidates/page.tsx" << 'ENDOFFILE'
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -370,3 +626,94 @@ export default function CandidatesPage() {
     </div>
   );
 }
+ENDOFFILE
+echo "✅ src/app/(dashboard)/candidates/page.tsx (clickable rows)"
+
+# ========================
+# Fix requirements/[id]/page.tsx — add Interview Reject
+# ========================
+node -e "
+const fs = require('fs');
+const fp = 'src/app/(dashboard)/requirements/[id]/page.tsx';
+let c = fs.readFileSync(fp, 'utf8');
+c = c.replace(
+  \"'Not Joined','Account Manager Rejected'\",
+  \"'Not Joined','Account Manager Rejected','Interview Reject'\"
+);
+c = c.replace(
+  \"const NOT_SELECTED_STATUSES = ['Not Joined', 'Account Manager Rejected'];\",
+  \"const NOT_SELECTED_STATUSES = ['Not Joined', 'Account Manager Rejected', 'Interview Reject'];\"
+);
+c = c.replace(
+  \"'Account Manager Rejected':'bg-rose-50 border-rose-200',\",
+  \"'Account Manager Rejected':'bg-rose-50 border-rose-200','Interview Reject':'bg-pink-50 border-pink-200',\"
+);
+c = c.replace(
+  \"'Account Manager Rejected':'text-rose-700',\",
+  \"'Account Manager Rejected':'text-rose-700','Interview Reject':'text-pink-700',\"
+);
+fs.writeFileSync(fp, c);
+console.log('Updated requirements/[id]/page.tsx');
+"
+echo "✅ requirements/[id]/page.tsx (Interview Reject added)"
+
+# ========================
+# Fix pipeline/page.tsx — add Interview Reject
+# ========================
+node -e "
+const fs = require('fs');
+const fp = 'src/app/(dashboard)/pipeline/page.tsx';
+let c = fs.readFileSync(fp, 'utf8');
+if (!c.includes('Interview Reject')) {
+  c = c.replace(
+    \"'Account Manager Rejected'\",
+    \"'Account Manager Rejected','Interview Reject'\"
+  );
+  c = c.replace(
+    \"'Account Manager Rejected':'AM Rejected'\",
+    \"'Account Manager Rejected':'AM Rejected','Interview Reject':'Int. Reject'\"
+  );
+  c = c.replace(
+    \"'Account Manager Rejected':'border-t-rose-500'\",
+    \"'Account Manager Rejected':'border-t-rose-500','Interview Reject':'border-t-pink-400'\"
+  );
+  fs.writeFileSync(fp, c);
+  console.log('Updated pipeline/page.tsx');
+} else { console.log('pipeline/page.tsx already has Interview Reject'); }
+"
+echo "✅ pipeline/page.tsx (Interview Reject added)"
+
+# ========================
+# Fix candidates/[id]/page.tsx — add Interview Reject
+# ========================
+node -e "
+const fs = require('fs');
+const fp = 'src/app/(dashboard)/candidates/[id]/page.tsx';
+let c = fs.readFileSync(fp, 'utf8');
+if (!c.includes('Interview Reject')) {
+  c = c.replace(
+    \"'Account Manager Rejected': 'bg-rose-100 text-rose-700',\",
+    \"'Account Manager Rejected': 'bg-rose-100 text-rose-700', 'Interview Reject': 'bg-pink-100 text-pink-700',\"
+  );
+  fs.writeFileSync(fp, c);
+  console.log('Updated candidates/[id]/page.tsx');
+} else { console.log('candidates/[id]/page.tsx already updated'); }
+"
+echo "✅ candidates/[id]/page.tsx (Interview Reject added)"
+
+echo ""
+echo "=========================================="
+echo "🎉 Fix complete!"
+echo "=========================================="
+echo ""
+echo "Run these commands:"
+echo "  1. cd server && node fix-status.js"
+echo "  2. kill \$(lsof -t -i:4000) 2>/dev/null; node index.js"
+echo ""
+echo "Changes:"
+echo "  ✓ Candidates list — clicking any row opens /candidates/:id"
+echo "  ✓ Requirements detail — clicking candidate opens /candidates/:id"
+echo "  ✓ Pipeline Kanban — clicking candidate name opens /candidates/:id"
+echo "  ✓ Interview Reject added as new status everywhere"
+echo "  ✓ Requirements pipeline tabs include Interview Reject in Not Selected"
+echo ""
