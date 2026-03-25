@@ -38,7 +38,7 @@ interface Requirement {
 }
 
 interface Client { id: string; name: string; }
-interface TeamMember { id: string; name: string; role: string; email: string; }
+interface TeamMember { id: string; name: string; role: string; email: string; is_active?: boolean; }
 
 const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
 const STATUSES = ['Open', 'On Hold', 'Closed', 'Filled'];
