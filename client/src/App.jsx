@@ -478,44 +478,135 @@ const CVHub = () => {
   </div>;
 };
 
-// ── CLIENTS ────────────────────────────────────────────────────────────
+// ── CLIENTS (with onboarding form) ────────────────────────────────────
+const VERTICALS = ["IT", "Non-IT"];
+const DOMAINS = ["IT Product", "IT Services", "BFSI", "Manufacturing", "HVAC / Engineering", "Telecom", "Internet", "Healthcare", "Automotive", "Retail", "Other"];
+
 const ClientsPage = ({ perms }) => {
   const [search, setSearch] = useState(""); const [sel, setSel] = useState(null);
   const [tierFilter, setTierFilter] = useState("All");
-  const f = CLIENTS.filter(c => {
-    const m = c.name.toLowerCase().includes(search.toLowerCase()) || c.industry.toLowerCase().includes(search.toLowerCase());
+  const [showAdd, setShowAdd] = useState(false);
+  const [clientsData, setClientsData] = useState(CLIENTS);
+
+  const f = clientsData.filter(c => {
+    const m = c.name.toLowerCase().includes(search.toLowerCase()) || (c.industry||"").toLowerCase().includes(search.toLowerCase());
     return m && (tierFilter==="All" || c.tier===tierFilter);
   });
+
+  const addClient = (client) => {
+    setClientsData(prev => [{ ...client, id: `C${String(prev.length+1).padStart(3,"0")}`, openReqs: 0, totalPlacements: 0, revenue: 0, lastContact: new Date().toISOString().slice(0,10) }, ...prev]);
+    setShowAdd(false);
+  };
+
   return <div>
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18, gap:10, flexWrap:"wrap" }}>
       <div style={{ display:"flex", gap:8, alignItems:"center" }}>
         <SearchBox value={search} onChange={setSearch} placeholder="Search clients..." />
         {["All","Platinum","Gold","Silver"].map(t => <Pill key={t} text={t} active={tierFilter===t} onClick={()=>setTierFilter(t)} />)}
       </div>
-      {perms?.canEditClients && <Btn icon={Icons.plus}>Add Client</Btn>}
+      {perms?.canEditClients && <Btn icon={Icons.plus} onClick={()=>setShowAdd(true)}>Add Client</Btn>}
     </div>
     <Table columns={[
-      { label:"Company", render:r=><div><span style={{fontWeight:700,color:C.text}}>{r.name}</span><div style={{fontSize:10,color:C.textDim}}>{r.id}</div></div> },
+      { label:"Company", render:r=><div><span style={{fontWeight:700,color:C.text}}>{r.name}</span><div style={{fontSize:10,color:C.textDim}}>{r.vertical||""} • {r.domain||r.industry||""}</div></div> },
       { label:"Tier", render:r=><Badge text={r.tier} color={r.tier==="Platinum"?C.purple:r.tier==="Gold"?C.yellow:C.textMuted} /> },
-      { label:"Industry", key:"industry" },
-      { label:"POC", key:"poc" },
+      { label:"Domain", render:r=>r.domain||r.industry||"—" },
+      { label:"SPOC", key:"poc" },
+      { label:"Location", key:"location" },
       { label:"Open Reqs", render:r=><span style={{color:r.openReqs>5?C.accent:C.text,fontWeight:700}}>{r.openReqs}</span> },
-      { label:"Placements", key:"totalPlacements" },
-      { label:"Revenue", render:r=><span style={{color:C.green,fontWeight:700}}>{fmtL(r.revenue)}</span> },
-      { label:"Fee", render:r=>`${r.feePercent}%` },
-      { label:"Status", render:r=><Badge text={r.status} color={r.status==="Active"?C.green:C.yellow} /> },
+      { label:"Fee", render:r=>`${r.feePercent||8.33}%` },
+      { label:"Status", render:r=><Badge text={r.status} color={r.status==="Active"?C.green:r.status==="Dormant"?C.yellow:C.textMuted} /> },
     ]} data={f} onRow={setSel} />
+
+    {/* Client Detail Modal */}
     <Modal open={!!sel} onClose={()=>setSel(null)} title={sel?.name} width={600}>
       {sel && <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-        <Field label="Client ID" value={sel.id} /><Field label="Industry" value={sel.industry} />
-        <Field label="Tier" value={sel.tier} /><Field label="Contact" value={`${sel.poc} (${sel.pocRole})`} />
-        <Field label="Email" value={sel.email} /><Field label="Phone" value={sel.phone} />
-        <Field label="Location" value={sel.location} /><Field label="Contract Until" value={sel.contractEnd} />
+        <Field label="Company Name" value={sel.name} /><Field label="Location" value={sel.location} />
+        <Field label="Vertical" value={sel.vertical||"—"} /><Field label="Domain" value={sel.domain||sel.industry||"—"} />
+        <Field label="SPOC Name" value={sel.poc} /><Field label="SPOC Role" value={sel.pocRole||"—"} />
+        <Field label="SPOC Email" value={sel.email||"—"} /><Field label="SPOC Phone" value={sel.phone||"—"} />
+        <Field label="Tier" value={sel.tier} /><Field label="Fee %" value={`${sel.feePercent||8.33}%`} />
+        <Field label="Payment Terms" value={sel.paymentTerms||"—"} /><Field label="Contract End" value={sel.contractEnd||"—"} />
+        <Field label="Agreement Terms" value={sel.agreementTerms||"Standard"} /><Field label="Status" value={sel.status} />
         <Field label="Open Requirements" value={sel.openReqs} /><Field label="Total Placements" value={sel.totalPlacements} />
-        <Field label="Revenue" value={`₹${fmt(sel.revenue)}`} /><Field label="Fee %" value={`${sel.feePercent}%`} />
-        <Field label="Payment Terms" value={sel.paymentTerms} /><Field label="Last Contact" value={sel.lastContact} />
+        {sel.notes && <div style={{gridColumn:"1/-1"}}><Field label="Notes" value={sel.notes} /></div>}
       </div>}
     </Modal>
+
+    {/* Add Client Onboarding Form */}
+    <Modal open={showAdd} onClose={()=>setShowAdd(false)} title="Onboard New Client" width={640}>
+      <ClientOnboardingForm onSave={addClient} onClose={()=>setShowAdd(false)} />
+    </Modal>
+  </div>;
+};
+
+const ClientOnboardingForm = ({ onSave, onClose }) => {
+  const [v, setV] = useState({status:"Active", tier:"Silver", feePercent:"8.33", paymentTerms:"Net 30"});
+  const [saved, setSaved] = useState(false);
+  const set = (k, val) => setV(p => ({...p, [k]: val}));
+  const inputStyle = { width:"100%", padding:"10px 12px", borderRadius:8, border:`1px solid ${C.border}`, background:C.surface, color:C.text, fontSize:13, fontFamily:F.body, outline:"none", boxSizing:"border-box" };
+  const labelStyle = { display:"block", fontSize:11, color:C.textMuted, marginBottom:4, fontWeight:600 };
+
+  if (saved) return <div style={{ textAlign:"center", padding:30 }}>
+    <div style={{ width:48, height:48, borderRadius:24, background:C.green+"20", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16", color:C.green }}>{Icons.check}</div>
+    <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:F.display }}>Client onboarded!</div>
+    <div style={{ fontSize:13, color:C.textMuted, marginTop:4 }}>{v.name} has been added to FX CRM.</div>
+  </div>;
+
+  return <div>
+    <div style={{ fontSize:13, fontWeight:600, color:C.text, marginBottom:12 }}>Company details</div>
+    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+      <div><label style={labelStyle}>Company Name *</label><input value={v.name||""} onChange={e=>set("name",e.target.value)} style={inputStyle} placeholder="Company name" /></div>
+      <div><label style={labelStyle}>Location</label><input value={v.location||""} onChange={e=>set("location",e.target.value)} style={inputStyle} placeholder="City" /></div>
+      <div><label style={labelStyle}>Vertical *</label>
+        <select value={v.vertical||""} onChange={e=>set("vertical",e.target.value)} style={inputStyle}>
+          <option value="">Select vertical</option>
+          {VERTICALS.map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+      <div><label style={labelStyle}>Domain *</label>
+        <select value={v.domain||""} onChange={e=>set("domain",e.target.value)} style={inputStyle}>
+          <option value="">Select domain</option>
+          {DOMAINS.map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+    </div>
+
+    <div style={{ fontSize:13, fontWeight:600, color:C.text, marginTop:16, marginBottom:12 }}>SPOC (Single Point of Contact)</div>
+    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+      <div><label style={labelStyle}>SPOC Name *</label><input value={v.poc||""} onChange={e=>set("poc",e.target.value)} style={inputStyle} placeholder="Contact person" /></div>
+      <div><label style={labelStyle}>SPOC Role</label><input value={v.pocRole||""} onChange={e=>set("pocRole",e.target.value)} style={inputStyle} placeholder="TA Head, HR Director" /></div>
+      <div><label style={labelStyle}>SPOC Email</label><input value={v.email||""} onChange={e=>set("email",e.target.value)} style={inputStyle} placeholder="email@company.com" /></div>
+      <div><label style={labelStyle}>SPOC Phone</label><input value={v.phone||""} onChange={e=>set("phone",e.target.value)} style={inputStyle} placeholder="+91 98765 43210" /></div>
+    </div>
+
+    <div style={{ fontSize:13, fontWeight:600, color:C.text, marginTop:16, marginBottom:12 }}>Agreement terms</div>
+    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12 }}>
+      <div><label style={labelStyle}>Client Tier</label>
+        <select value={v.tier||"Silver"} onChange={e=>set("tier",e.target.value)} style={inputStyle}>
+          {["Platinum","Gold","Silver"].map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+      <div><label style={labelStyle}>Fee %</label><input value={v.feePercent||"8.33"} onChange={e=>set("feePercent",e.target.value)} style={inputStyle} placeholder="8.33" /></div>
+      <div><label style={labelStyle}>Payment Terms</label>
+        <select value={v.paymentTerms||"Net 30"} onChange={e=>set("paymentTerms",e.target.value)} style={inputStyle}>
+          {["Net 15","Net 30","Net 45","Net 60","Net 90"].map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+      <div><label style={labelStyle}>Contract End Date</label><input type="date" value={v.contractEnd||""} onChange={e=>set("contractEnd",e.target.value)} style={inputStyle} /></div>
+      <div style={{gridColumn:"span 2"}}><label style={labelStyle}>Agreement Terms / Notes</label>
+        <input value={v.agreementTerms||""} onChange={e=>set("agreementTerms",e.target.value)} style={inputStyle} placeholder="Replacement clause, guarantee period, etc." />
+      </div>
+    </div>
+
+    <div style={{ marginTop:12 }}>
+      <label style={labelStyle}>Additional Notes</label>
+      <textarea value={v.notes||""} onChange={e=>set("notes",e.target.value)} rows={2} style={{...inputStyle, resize:"vertical"}} placeholder="Any other details about this client..." />
+    </div>
+
+    <div style={{ display:"flex", justifyContent:"flex-end", gap:10, marginTop:20 }}>
+      <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+      <Btn variant="success" icon={Icons.check} onClick={()=>{onSave(v);setSaved(true);}}>Onboard Client</Btn>
+    </div>
   </div>;
 };
 
@@ -693,7 +784,15 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
         <div><label style={labelStyle}>Full Name *</label><input value={v.name||""} onChange={e=>set("name",e.target.value)} style={inputStyle} placeholder="Candidate name" /></div>
         <div><label style={labelStyle}>Email</label><input value={v.email||""} onChange={e=>set("email",e.target.value)} style={inputStyle} placeholder="email@example.com" /></div>
         <div><label style={labelStyle}>Phone *</label><input value={v.phone||""} onChange={e=>set("phone",e.target.value)} style={inputStyle} placeholder="+91 98765 43210" /></div>
-        <div><label style={labelStyle}>Role / Designation</label><input value={v.role||""} onChange={e=>set("role",e.target.value)} style={inputStyle} placeholder="Java Developer" /></div>
+        <div><label style={labelStyle}>Role / Designation (linked to requirement)</label>
+          <select value={v.role||""} onChange={e=>{set("role",e.target.value); const j=JOBS.find(j=>j.title===e.target.value); if(j){set("linkedJobId",j.id);set("linkedClient",j.client);}}} style={inputStyle}>
+            <option value="">Select from open positions or type below</option>
+            {JOBS.filter(j=>j.status==="Open").map(j=><option key={j.id} value={j.title}>{j.title} — {j.client} ({j.location})</option>)}
+            <option value="__custom">Other (type manually)</option>
+          </select>
+          {v.role==="__custom" && <input value={v.customRole||""} onChange={e=>{set("customRole",e.target.value);set("role",e.target.value);}} style={{...inputStyle,marginTop:6}} placeholder="Type role manually" />}
+          {v.linkedClient && <div style={{fontSize:11,color:C.green,marginTop:4}}>Linked to: {v.linkedClient}</div>}
+        </div>
         <div><label style={labelStyle}>Experience</label><input value={v.experience||""} onChange={e=>set("experience",e.target.value)} style={inputStyle} placeholder="5 yrs" /></div>
         <div><label style={labelStyle}>Location</label><input value={v.location||""} onChange={e=>set("location",e.target.value)} style={inputStyle} placeholder="Bangalore" /></div>
         <div><label style={labelStyle}>Skills (comma separated)</label><input value={v.skills||""} onChange={e=>set("skills",e.target.value)} style={inputStyle} placeholder="Java, Spring Boot, AWS" /></div>
@@ -705,12 +804,22 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
         </div>
       </div>
       <div style={{ marginTop:16 }}>
-        <label style={labelStyle}>Upload CV (PDF / DOC / DOCX)</label>
-        <div style={{ border:`2px dashed ${C.border}`, borderRadius:10, padding:20, textAlign:"center", cursor:"pointer", background:cvFile?C.green+"08":C.surface }}
-          onClick={()=>document.getElementById("cv-input").click()}>
+        <label style={labelStyle}>Upload CV (PDF / DOC / DOCX) — drag & drop or click</label>
+        <div style={{ border:`2px dashed ${cvFile?C.green:C.border}`, borderRadius:10, padding:24, textAlign:"center", cursor:"pointer", background:cvFile?C.green+"08":C.surface, transition:"all .2s" }}
+          onClick={()=>document.getElementById("cv-input").click()}
+          onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor=C.accent;e.currentTarget.style.background=C.accentGlow;}}
+          onDragLeave={e=>{e.preventDefault();e.currentTarget.style.borderColor=cvFile?C.green:C.border;e.currentTarget.style.background=cvFile?C.green+"08":C.surface;}}
+          onDrop={e=>{e.preventDefault();e.currentTarget.style.borderColor=C.green;e.currentTarget.style.background=C.green+"08";const file=e.dataTransfer.files[0];if(file)setCvFile(file);}}>
           <input id="cv-input" type="file" accept=".pdf,.doc,.docx" style={{display:"none"}} onChange={e=>setCvFile(e.target.files[0])} />
-          {cvFile ? <div style={{color:C.green,fontWeight:600,fontSize:13}}>{Icons.check} {cvFile.name} ({(cvFile.size/1024/1024).toFixed(1)} MB)</div>
-          : <div style={{color:C.textMuted,fontSize:13}}>Click to select CV file or drag & drop</div>}
+          {cvFile ? <div>
+            <div style={{color:C.green,fontWeight:700,fontSize:14,marginBottom:4}}>{Icons.check} {cvFile.name}</div>
+            <div style={{color:C.textMuted,fontSize:12}}>{(cvFile.size/1024/1024).toFixed(2)} MB • Ready to upload</div>
+          </div>
+          : <div>
+            <div style={{color:C.textMuted,fontSize:32,marginBottom:8}}>{Icons.upload}</div>
+            <div style={{color:C.text,fontWeight:600,fontSize:14}}>Drag & drop CV here</div>
+            <div style={{color:C.textDim,fontSize:12,marginTop:4}}>or click to browse • PDF, DOC, DOCX up to 20MB</div>
+          </div>}
         </div>
       </div>
       <div style={{ display:"flex", justifyContent:"flex-end", marginTop:16 }}>
@@ -790,19 +899,25 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
   </div>;
 };
 
-// ── JOBS ────────────────────────────────────────────────────────────────
+// ── REQUIREMENTS (most critical page) ──────────────────────────────────
 const JobsPage = ({ user, perms }) => {
   const [search, setSearch] = useState(""); const [sel, setSel] = useState(null);
   const [statusF, setStatusF] = useState("Open");
   const [jobsData, setJobsData] = useState(JOBS);
+  const [showAdd, setShowAdd] = useState(false);
   const [assignSuccess, setAssignSuccess] = useState("");
-  const [viewAll, setViewAll] = useState(user?.role === "Super Admin" || user?.role === "Account Manager");
+  const [viewMode, setViewMode] = useState("all"); // "all" or "mine"
   const isRecruiter = user?.role === "Recruiter";
-  const canAssign = user?.role === "Super Admin" || user?.role === "Account Manager";
-  const allJobs = isRecruiter && !viewAll ? jobsData.filter(j => j.recruiter === user?.name) : jobsData;
-  const f = allJobs.filter(j => {
-    const m = j.title.toLowerCase().includes(search.toLowerCase()) || j.client.toLowerCase().includes(search.toLowerCase());
-    return m && (statusF==="All" || j.status===statusF);
+  const isAM = user?.role === "Account Manager";
+  const isSuperAdmin = user?.role === "Super Admin";
+  const canAssign = isSuperAdmin || isAM;
+  const canAdd = isSuperAdmin || isAM;
+
+  const myJobs = jobsData.filter(j => j.recruiter === user?.name);
+  const displayJobs = (isRecruiter && viewMode === "mine") ? myJobs : jobsData;
+  const f = displayJobs.filter(j => {
+    const m = j.title.toLowerCase().includes(search.toLowerCase()) || j.client.toLowerCase().includes(search.toLowerCase()) || (j.location||"").toLowerCase().includes(search.toLowerCase());
+    return m && (statusF === "All" || j.status === statusF);
   });
 
   const assignRecruiter = (jobId, recruiterName) => {
@@ -812,74 +927,223 @@ const JobsPage = ({ user, perms }) => {
     setTimeout(() => setAssignSuccess(""), 3000);
   };
 
+  const addJob = (job) => {
+    const id = `JB${String(jobsData.length + 1).padStart(3, "0")}`;
+    setJobsData(prev => [{ ...job, id, filled: 0, submitted: 0, shortlisted: 0, postedDate: new Date().toISOString().slice(0, 10) }, ...prev]);
+    setShowAdd(false);
+  };
+
+  // Find client details for selected job
+  const selClient = sel ? CLIENTS.find(c => c.id === sel.clientId || c.name === sel.client) : null;
+
   return <div>
-    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18, gap:10, flexWrap:"wrap" }}>
-      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-        <SearchBox value={search} onChange={setSearch} placeholder="Job or client..." />
-        {["All","Open","On Hold","Closed"].map(s => <Pill key={s} text={s} active={statusF===s} onClick={()=>setStatusF(s)} />)}
-        {isRecruiter && <Pill text={viewAll ? "All positions" : "My positions"} active={!viewAll} onClick={()=>setViewAll(p=>!p)} />}
+    {/* Toolbar */}
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 10, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <SearchBox value={search} onChange={setSearch} placeholder="Search position, client, location..." />
+        {["All", "Open", "On Hold", "Closed"].map(s => <Pill key={s} text={s} active={statusF === s} onClick={() => setStatusF(s)} />)}
+        {(isRecruiter || isAM) && <>
+          <Pill text="All positions" active={viewMode === "all"} onClick={() => setViewMode("all")} />
+          <Pill text="My positions" active={viewMode === "mine"} onClick={() => setViewMode("mine")} />
+        </>}
       </div>
-      <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-        {isRecruiter && <span style={{ fontSize:12, color:C.textMuted }}>{f.length} position{f.length!==1?"s":""} assigned</span>}
-        {perms?.canEditJobs && <Btn icon={Icons.plus}>Add Requirement</Btn>}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <span style={{ fontSize: 12, color: C.textMuted }}>{f.length} position{f.length !== 1 ? "s" : ""}{viewMode === "mine" ? " assigned to you" : ""}</span>
+        {canAdd && <Btn icon={Icons.plus} onClick={() => setShowAdd(true)}>Add Requirement</Btn>}
       </div>
     </div>
-    {assignSuccess && <div style={{ padding:"10px 16px", borderRadius:8, background:C.green+"18", color:C.green, fontSize:13, fontWeight:600, marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>{Icons.check} {assignSuccess}</div>}
-    <Table columns={[
-      { label:"ID", render:r=><span style={{color:C.textDim,fontSize:11}}>{r.id}</span> },
-      { label:"Title", render:r=><span style={{fontWeight:700,color:C.text}}>{r.title}</span> },
-      { label:"Client", key:"client" },
-      { label:"CTC", key:"ctcRange" },
-      { label:"Positions", render:r=><span>{r.filled}<span style={{color:C.textDim}}>/{r.positions}</span></span> },
-      { label:"Submitted", key:"submitted" },
-      { label:"Shortlisted", key:"shortlisted" },
-      { label:"Recruiter", render:r=><span style={{color:r.recruiter?C.accent:C.red,fontWeight:600}}>{r.recruiter||"Unassigned"}</span> },
-      { label:"Priority", render:r=><Badge text={r.priority} color={r.priority==="Critical"?C.red:r.priority==="High"?C.yellow:C.accent} /> },
-      { label:"Deadline", key:"deadline" },
-    ]} data={f} onRow={setSel} />
-    <Modal open={!!sel} onClose={()=>{setSel(null);setAssignSuccess("");}} title={sel?.title} width={580}>
-      {sel && <div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-          <Field label="Job ID" value={sel.id} /><Field label="Client" value={sel.client} />
-          <Field label="Location" value={sel.location} /><Field label="Type" value={sel.type} />
-          <Field label="CTC Range" value={sel.ctcRange} /><Field label="Positions" value={`${sel.filled}/${sel.positions}`} />
-          <Field label="Submitted" value={sel.submitted} /><Field label="Shortlisted" value={sel.shortlisted} />
-          <Field label="Priority" value={sel.priority} /><Field label="Deadline" value={sel.deadline} />
-          <Field label="Posted" value={sel.postedDate} /><Field label="Status" value={sel.status} />
-        </div>
-        <div style={{ gridColumn:"1/-1", marginTop:8 }}>
-          <div style={{ fontSize:10, color:C.textDim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5, fontWeight:600 }}>Required Skills</div>
-          <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>{sel.skills.map(s => <span key={s} style={{ fontSize:12, padding:"4px 12px", borderRadius:14, background:C.accentGlow, color:C.accentLight }}>{s}</span>)}</div>
-        </div>
-        {sel.description && <div style={{ marginTop:12 }}><Field label="Notes" value={sel.description} /></div>}
+    {assignSuccess && <div style={{ padding: "10px 16px", borderRadius: 8, background: C.green + "18", color: C.green, fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{Icons.check} {assignSuccess}</div>}
 
-        {/* Assign Recruiter Section */}
-        <div style={{ marginTop:16, padding:16, borderRadius:12, background:C.surface, border:`1px solid ${C.border}` }}>
-          <div style={{ fontSize:10, color:C.textDim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:10, fontWeight:600 }}>Assigned recruiter</div>
-          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:canAssign?12:0 }}>
-            <div style={{ width:36, height:36, borderRadius:18, background:C.accent+"20", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:800, color:C.accent }}>{sel.recruiter?sel.recruiter[0]:"?"}</div>
+    {/* Jobs Table */}
+    <Table columns={[
+      { label: "Title", render: r => <div><span style={{ fontWeight: 700, color: C.text }}>{r.title}</span><div style={{ fontSize: 10, color: C.textDim }}>{r.client}</div></div> },
+      { label: "Location", key: "location" },
+      { label: "CTC", key: "ctcRange" },
+      { label: "Exp", render: r => r.experience || "—" },
+      { label: "Positions", render: r => <span>{r.filled}<span style={{ color: C.textDim }}>/{r.positions}</span></span> },
+      { label: "Assigned To", render: r => <span style={{ color: r.recruiter ? C.accent : C.red, fontWeight: 600 }}>{r.recruiter || "Unassigned"}</span> },
+      { label: "Priority", render: r => <Badge text={r.priority} color={r.priority === "Critical" ? C.red : r.priority === "High" ? C.yellow : C.accent} /> },
+      { label: "Status", render: r => <Badge text={r.status} color={r.status === "Open" ? C.green : r.status === "On Hold" ? C.yellow : C.textMuted} /> },
+      { label: "JD", render: r => r.jobDescription ? <span style={{ color: C.green }}>Yes</span> : <span style={{ color: C.textDim }}>No</span> },
+    ]} data={f} onRow={setSel} />
+
+    {/* ══════ Requirement Detail Modal ══════ */}
+    <Modal open={!!sel} onClose={() => { setSel(null); setAssignSuccess(""); }} title={sel?.title} width={700}>
+      {sel && <div>
+        {/* Section 1: Job Details */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10, fontWeight: 700 }}>Requirement details</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+            <Field label="Position" value={sel.title} />
+            <Field label="Client" value={sel.client} />
+            <Field label="Location" value={sel.location} />
+            <Field label="CTC Range" value={sel.ctcRange} />
+            <Field label="Experience" value={sel.experience || "—"} />
+            <Field label="Type" value={sel.type || "Permanent"} />
+            <Field label="Positions" value={`${sel.filled}/${sel.positions}`} />
+            <Field label="Priority" value={sel.priority} />
+            <Field label="Status" value={sel.status} />
+            <Field label="Posted" value={sel.postedDate} />
+            <Field label="Deadline" value={sel.deadline || "—"} />
+            <Field label="Assigned To" value={sel.recruiter || "Unassigned"} />
+          </div>
+        </div>
+
+        {/* Section 2: Job Description */}
+        <div style={{ marginBottom: 16, padding: 16, borderRadius: 12, background: C.surface, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, fontWeight: 700 }}>Job description</div>
+          {sel.jobDescription ? (
+            <div style={{ fontSize: 13, color: C.text, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{sel.jobDescription}</div>
+          ) : (
+            <div style={{ fontSize: 13, color: C.textDim, fontStyle: "italic" }}>No job description attached. {canAdd ? "Edit this requirement to add one." : "Ask your Account Manager to add a JD."}</div>
+          )}
+          {sel.description && <div style={{ marginTop: 8, fontSize: 12, color: C.textMuted }}><strong>Notes:</strong> {sel.description}</div>}
+        </div>
+
+        {/* Section 3: Skills */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6, fontWeight: 700 }}>Required skills</div>
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+            {(sel.skills || []).map(s => <span key={s} style={{ fontSize: 12, padding: "4px 12px", borderRadius: 14, background: C.accentGlow, color: C.accentLight }}>{s}</span>)}
+            {(!sel.skills || sel.skills.length === 0) && <span style={{ color: C.textDim, fontSize: 12 }}>No skills specified</span>}
+          </div>
+        </div>
+
+        {/* Section 4: Client Details */}
+        {selClient && (
+          <div style={{ marginBottom: 16, padding: 16, borderRadius: 12, background: C.surface, border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10, fontWeight: 700 }}>Client details</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+              <Field label="Company" value={selClient.name} />
+              <Field label="SPOC" value={selClient.poc} />
+              <Field label="Location" value={selClient.location} />
+              <Field label="Domain" value={selClient.domain || selClient.industry || "—"} />
+              <Field label="Tier" value={selClient.tier || "—"} />
+              <Field label="Fee %" value={`${selClient.feePercent || 8.33}%`} />
+            </div>
+          </div>
+        )}
+
+        {/* Section 5: Assign Recruiter (AM + Super Admin only) */}
+        <div style={{ padding: 16, borderRadius: 12, background: C.surface, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10, fontWeight: 700 }}>Assignment</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: canAssign ? 14 : 0 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 19, background: C.accent + "20", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: C.accent }}>{sel.recruiter ? sel.recruiter[0] : "?"}</div>
             <div>
-              <div style={{ fontSize:14, fontWeight:700, color:C.text }}>{sel.recruiter || "Unassigned"}</div>
-              <div style={{ fontSize:11, color:C.textMuted }}>{TEAM.find(t=>t.name===sel.recruiter)?.role || ""}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{sel.recruiter || "Unassigned"}</div>
+              <div style={{ fontSize: 11, color: C.textMuted }}>{TEAM.find(t => t.name === sel.recruiter)?.role || "No one assigned yet"}</div>
             </div>
           </div>
           {canAssign && <>
-            <div style={{ fontSize:11, color:C.textMuted, marginBottom:8, fontWeight:600 }}>Reassign to:</div>
-            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+            <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8, fontWeight: 600 }}>Assign / reassign to:</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {TEAM.map(t => (
-                <button key={t.id} onClick={()=>assignRecruiter(sel.id, t.name)}
-                  style={{ padding:"8px 14px", borderRadius:8, border:`1px solid ${sel.recruiter===t.name?C.accent:C.border}`, background:sel.recruiter===t.name?C.accentGlow:"transparent", color:sel.recruiter===t.name?C.accent:C.text, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:F.body, display:"flex", alignItems:"center", gap:6, transition:"all .15s" }}>
-                  <span style={{ width:22, height:22, borderRadius:11, background:t.color+"20", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:800, color:t.color }}>{t.avatar}</span>
-                  {t.name}
-                  <span style={{ fontSize:10, color:C.textDim }}>({t.role})</span>
+                <button key={t.id} onClick={() => assignRecruiter(sel.id, t.name)}
+                  style={{ padding: "7px 12px", borderRadius: 8, border: `1px solid ${sel.recruiter === t.name ? C.accent : C.border}`, background: sel.recruiter === t.name ? C.accentGlow : "transparent", color: sel.recruiter === t.name ? C.accent : C.text, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: F.body, display: "flex", alignItems: "center", gap: 5, transition: "all .15s" }}>
+                  <span style={{ width: 20, height: 20, borderRadius: 10, background: t.color + "20", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 800, color: t.color }}>{t.avatar}</span>
+                  {t.name} <span style={{ fontSize: 9, color: C.textDim }}>({t.role})</span>
                 </button>
               ))}
             </div>
-            {assignSuccess && <div style={{ marginTop:10, padding:"8px 12px", borderRadius:8, background:C.green+"18", color:C.green, fontSize:12, fontWeight:600, display:"flex", alignItems:"center", gap:6 }}>{Icons.check} {assignSuccess}</div>}
+            {assignSuccess && <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: C.green + "18", color: C.green, fontSize: 12, fontWeight: 600 }}>{Icons.check} {assignSuccess}</div>}
           </>}
         </div>
+
+        {/* Section 6: Share JD */}
+        {sel.jobDescription && (
+          <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+            <Btn small variant="primary" icon={Icons.linkedin} onClick={() => { const text = encodeURIComponent(`Hiring: ${sel.title}\nLocation: ${sel.location}\n\n${sel.jobDescription?.substring(0, 250)}...\n\nApply: careers@fxconsulting.in`); window.open(`https://www.linkedin.com/sharing/share-offsite/?url=https://fxconsulting.in&title=${encodeURIComponent(sel.title)}&summary=${text}`, "_blank"); }}>Share on LinkedIn</Btn>
+            <Btn small variant="secondary" icon={Icons.globe} onClick={() => window.open("https://www.iimjobs.com/postjob", "_blank")}>Post on IIMJobs</Btn>
+            <Btn small variant="secondary" onClick={() => { navigator.clipboard?.writeText(`Hiring: ${sel.title}\nClient: ${sel.client}\nLocation: ${sel.location}\nCTC: ${sel.ctcRange}\nExperience: ${sel.experience||"Any"}\n\n${sel.jobDescription||""}\n\nSkills: ${(sel.skills||[]).join(", ")}\n\nApply: careers@fxconsulting.in`); }}>Copy JD</Btn>
+          </div>
+        )}
       </div>}
     </Modal>
+
+    {/* ══════ Add Requirement Form ══════ */}
+    <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Add New Requirement" width={700}>
+      <AddRequirementForm clients={CLIENTS} team={TEAM} onSave={addJob} onClose={() => setShowAdd(false)} />
+    </Modal>
+  </div>;
+};
+
+// ── Add Requirement Form ───────────────────────────────────────────────
+const AddRequirementForm = ({ clients, team, onSave, onClose }) => {
+  const [v, setV] = useState({ status: "Open", priority: "High", type: "Permanent", positions: "1" });
+  const [saved, setSaved] = useState(false);
+  const set = (k, val) => setV(p => ({ ...p, [k]: val }));
+  const inputStyle = { width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, fontFamily: F.body, outline: "none", boxSizing: "border-box" };
+  const labelStyle = { display: "block", fontSize: 11, color: C.textMuted, marginBottom: 4, fontWeight: 600 };
+
+  if (saved) return <div style={{ textAlign: "center", padding: 30 }}>
+    <div style={{ width: 48, height: 48, borderRadius: 24, background: C.green + "20", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16", color: C.green }}>{Icons.check}</div>
+    <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: F.display }}>Requirement added!</div>
+    <div style={{ fontSize: 13, color: C.textMuted, marginTop: 4 }}>{v.title} for {clients.find(c => c.id === v.clientId)?.name || "client"}{v.recruiter ? ` — assigned to ${v.recruiter}` : ""}</div>
+  </div>;
+
+  return <div>
+    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 12 }}>Position details</div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div><label style={labelStyle}>Job Title *</label><input value={v.title || ""} onChange={e => set("title", e.target.value)} style={inputStyle} placeholder="Sr. Service Engineer" /></div>
+      <div><label style={labelStyle}>Client *</label>
+        <select value={v.clientId || ""} onChange={e => { set("clientId", e.target.value); set("client", clients.find(c => c.id === e.target.value)?.name || ""); }} style={inputStyle}>
+          <option value="">Select client</option>
+          {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      </div>
+      <div><label style={labelStyle}>Location *</label><input value={v.location || ""} onChange={e => set("location", e.target.value)} style={inputStyle} placeholder="Mumbai" /></div>
+      <div><label style={labelStyle}>Type</label>
+        <select value={v.type || "Permanent"} onChange={e => set("type", e.target.value)} style={inputStyle}>
+          {["Permanent", "Contract", "Temporary"].map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+      <div><label style={labelStyle}>CTC Range *</label><input value={v.ctcRange || ""} onChange={e => set("ctcRange", e.target.value)} style={inputStyle} placeholder="12-18 LPA" /></div>
+      <div><label style={labelStyle}>Experience Range</label><input value={v.experience || ""} onChange={e => set("experience", e.target.value)} style={inputStyle} placeholder="3-5 yrs" /></div>
+      <div><label style={labelStyle}>No. of Positions</label><input type="number" value={v.positions || "1"} onChange={e => set("positions", e.target.value)} style={inputStyle} min="1" /></div>
+      <div><label style={labelStyle}>Priority</label>
+        <select value={v.priority || "High"} onChange={e => set("priority", e.target.value)} style={inputStyle}>
+          {["Critical", "High", "Medium", "Low"].map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+      <div><label style={labelStyle}>Deadline</label><input type="date" value={v.deadline || ""} onChange={e => set("deadline", e.target.value)} style={inputStyle} /></div>
+      <div><label style={labelStyle}>Skills (comma separated)</label><input value={v.skillsText || ""} onChange={e => set("skillsText", e.target.value)} style={inputStyle} placeholder="Java, Spring Boot, AWS" /></div>
+    </div>
+
+    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginTop: 16, marginBottom: 12 }}>Job description</div>
+    <textarea value={v.jobDescription || ""} onChange={e => set("jobDescription", e.target.value)} rows={6}
+      style={{ ...inputStyle, resize: "vertical" }} placeholder="Full job description — responsibilities, qualifications, what we're looking for..." />
+
+    <div style={{ marginTop: 12 }}>
+      <label style={labelStyle}>Internal Notes (visible to team only)</label>
+      <textarea value={v.description || ""} onChange={e => set("description", e.target.value)} rows={2}
+        style={{ ...inputStyle, resize: "vertical" }} placeholder="SPOC name, special instructions, budget notes..." />
+    </div>
+
+    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginTop: 16, marginBottom: 12 }}>Assignment</div>
+    <div>
+      <label style={labelStyle}>Assign to recruiter / account manager</label>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {team.map(t => (
+          <button key={t.id} onClick={() => set("recruiter", t.name)}
+            style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${v.recruiter === t.name ? C.accent : C.border}`, background: v.recruiter === t.name ? C.accentGlow : "transparent", color: v.recruiter === t.name ? C.accent : C.text, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: F.body, display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 22, height: 22, borderRadius: 11, background: t.color + "20", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800, color: t.color }}>{t.avatar}</span>
+            {t.name} <span style={{ fontSize: 10, color: C.textDim }}>({t.role})</span>
+          </button>
+        ))}
+      </div>
+    </div>
+
+    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+      <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+      <Btn variant="success" icon={Icons.check} onClick={() => {
+        const job = {
+          ...v, positions: parseInt(v.positions) || 1, status: "Open",
+          client: clients.find(c => c.id === v.clientId)?.name || v.client || "",
+          skills: (v.skillsText || "").split(",").map(s => s.trim()).filter(Boolean),
+        };
+        onSave(job); setSaved(true);
+      }}>Create Requirement</Btn>
+    </div>
   </div>;
 };
 
