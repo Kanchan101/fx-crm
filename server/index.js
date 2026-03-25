@@ -746,8 +746,8 @@ Respond ONLY with a valid JSON object. No markdown, no backticks, no explanation
 }
 
 Rules:
-- Name: person's full name only, never company name or document title
-- Phone: always add +91 prefix for Indian 10-digit numbers
+- Name: person's full name with proper spacing between first and last name. Never company name or document title
+- Phone: 10 digit Indian mobile number ONLY. No country code, no +91. Example: 9876543210
 - Location: current city of residence, not hometown
 - Experience: total professional experience in years
 - Skills: top 8 technical and professional skills found in CV

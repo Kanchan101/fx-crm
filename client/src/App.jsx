@@ -611,23 +611,22 @@ const ClientOnboardingForm = ({ onSave, onClose }) => {
 };
 
 // ── CANDIDATES (with CV Upload + Assessment + Status) ─────────────────
-const CAND_STATUSES = ["New","Screening","Account Manager Rejected","Submitted to Client","HR Review","Interview Stage","HR Discussion","Offer","Joined","Not Joined"];
-const STATUS_CLR = {"New":C.textMuted,"Screening":C.accent,"Account Manager Rejected":C.red,"Submitted to Client":"#6366F1","HR Review":C.purple,"Interview Stage":C.yellow,"HR Discussion":C.pink,"Offer":C.teal,"Joined":C.green,"Not Joined":C.red};
+const CAND_STATUSES = ["New","Screening","Submitted to Client","Client Review","Interview Stage","HR Discussion","Offer","Joined","Not Joined","Account Manager Rejected"];
+const STATUS_CLR = {"New":"#64748B","Screening":"#3B82F6","Submitted to Client":"#6366F1","Client Review":"#8B5CF6","Interview Stage":"#F59E0B","HR Discussion":"#EC4899","Offer":"#14B8A6","Joined":"#059669","Not Joined":"#EF4444","Account Manager Rejected":"#DC2626"};
 
-const CandidatesPage = ({ perms, user }) => {
+const CandidatesPage = ({ perms, user, allCandidates, setAllCandidates }) => {
   const [search, setSearch] = useState(""); const [sel, setSel] = useState(null);
   const [statusF, setStatusF] = useState("All");
   const [showAdd, setShowAdd] = useState(false);
-  const [candidates, setCandidates] = useState(CANDIDATES);
   const [statusMsg, setStatusMsg] = useState("");
 
-  const f = candidates.filter(c => {
+  const f = allCandidates.filter(c => {
     const m = c.name.toLowerCase().includes(search.toLowerCase()) || c.role.toLowerCase().includes(search.toLowerCase()) || (c.skills||[]).some(s=>s.toLowerCase().includes(search.toLowerCase()));
     return m && (statusF==="All" || c.pipelineStatus===statusF || c.status===statusF);
   });
 
   const changeStatus = (candidate, newStatus) => {
-    setCandidates(prev => prev.map(c => c.id === candidate.id ? {...c, pipelineStatus: newStatus, status: newStatus} : c));
+    setAllCandidates(prev => prev.map(c => c.id === candidate.id ? {...c, pipelineStatus: newStatus, status: newStatus} : c));
     setSel(prev => prev ? {...prev, pipelineStatus: newStatus, status: newStatus} : prev);
     setStatusMsg(`Status changed to "${newStatus}"`);
     setTimeout(() => setStatusMsg(""), 3000);
@@ -635,8 +634,8 @@ const CandidatesPage = ({ perms, user }) => {
   };
 
   const addCandidate = (newCand) => {
-    const id = `CN${String(candidates.length+1).padStart(4,"0")}`;
-    setCandidates(prev => [{...newCand, id, pipelineStatus:"New", status:"New", owner: user?.name, resumeScore: Math.round(((newCand.scoreSoft||0)+(newCand.scoreStability||0)+(newCand.scoreTech||0)+(newCand.scoreExp||0))/4*10)}, ...prev]);
+    const id = `CN${String(allCandidates.length+1).padStart(4,"0")}`;
+    setAllCandidates(prev => [{...newCand, id, pipelineStatus:"New", status:"New", owner: user?.name, resumeScore: Math.round(((newCand.scoreSoft||0)+(newCand.scoreStability||0)+(newCand.scoreTech||0)+(newCand.scoreExp||0))/4*10)}, ...prev]);
     setShowAdd(false);
   };
 
@@ -644,7 +643,7 @@ const CandidatesPage = ({ perms, user }) => {
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18, gap:10, flexWrap:"wrap" }}>
       <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
         <SearchBox value={search} onChange={setSearch} placeholder="Name, role, skills..." />
-        {["All","New","Screening","Submitted to Client","Interview Stage","Offer","Joined"].map(s => <Pill key={s} text={s.length>15?s.replace("Submitted to ","→ "):s} active={statusF===s} onClick={()=>setStatusF(s)} />)}
+        {["All","New","Screening","Submitted to Client","Client Review","Interview Stage","Offer","Joined"].map(s => <Pill key={s} text={s.length>15?s.replace("Submitted to ","-> "):s} active={statusF===s} onClick={()=>setStatusF(s)} />)}
       </div>
       {(perms?.canEditCandidates || user?.role==="Account Manager" || user?.role==="Super Admin") && <Btn icon={Icons.plus} onClick={()=>setShowAdd(true)}>Add Candidate + CV</Btn>}
     </div>
@@ -690,30 +689,24 @@ const CandidatesPage = ({ perms, user }) => {
 
         {/* Status Change */}
         <div style={{ marginTop:16, padding:14, borderRadius:10, background:C.surface, border:`1px solid ${C.border}` }}>
-          <div style={{ fontSize:10, color:C.textDim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:10, fontWeight:600 }}>Pipeline status</div>
-          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
-            <Badge text={sel.pipelineStatus||sel.status||"New"} color={STATUS_CLR[sel.pipelineStatus||sel.status]||C.textMuted} />
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+            <div style={{ fontSize:10, color:C.textDim, textTransform:"uppercase", letterSpacing:"0.06em", fontWeight:600 }}>Pipeline status</div>
+            <div style={{ fontSize:10, color:C.textDim }}>Owner: <span style={{color:C.accent,fontWeight:700}}>{sel.owner||"Unassigned"}</span></div>
           </div>
-          {(user?.role==="Recruiter" || user?.role==="Super Admin") && (
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
+            <div style={{ padding:"6px 16px", borderRadius:8, background:(STATUS_CLR[sel.pipelineStatus||sel.status]||C.textMuted)+"18", fontSize:14, fontWeight:700, color:STATUS_CLR[sel.pipelineStatus||sel.status]||C.textMuted }}>{sel.pipelineStatus||sel.status||"New"}</div>
+          </div>
+          {(user?.role==="Super Admin" || sel.owner===user?.name || user?.role==="Account Manager" || user?.role==="Recruiter") && (
             <div>
               <div style={{ fontSize:11, color:C.textMuted, marginBottom:6 }}>Change status:</div>
               <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
-                {CAND_STATUSES.filter(s => {
-                  if (user?.role==="Recruiter") return s !== "Account Manager Rejected";
-                  return true;
-                }).map(s => (
+                {CAND_STATUSES.map(s => (
                   <button key={s} onClick={()=>changeStatus(sel, s)}
                     style={{ padding:"6px 12px", borderRadius:8, border:`1px solid ${(sel.pipelineStatus||sel.status)===s?STATUS_CLR[s]:C.border}`, background:(sel.pipelineStatus||sel.status)===s?(STATUS_CLR[s]||C.accent)+"18":"transparent", color:(sel.pipelineStatus||sel.status)===s?STATUS_CLR[s]:C.textMuted, fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:F.body }}>
                     {s}
                   </button>
                 ))}
               </div>
-            </div>
-          )}
-          {user?.role==="Account Manager" && (
-            <div>
-              <div style={{ fontSize:11, color:C.textMuted, marginBottom:6 }}>Account Manager action:</div>
-              <Btn small variant="danger" onClick={()=>changeStatus(sel, "Account Manager Rejected")}>Reject Candidate</Btn>
             </div>
           )}
           {statusMsg && <div style={{ marginTop:8, fontSize:12, color:C.green, fontWeight:600 }}>{statusMsg}</div>}
@@ -763,14 +756,21 @@ const extractFromCVWithAI = async (text) => {
     const email = emails[0] || "";
     let phone = "";
     const pm = t.match(/(?:\+91[\s\-.]?)?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d/) || t.match(/\d{5}[\s\-.]?\d{5}/);
-    if (pm) { phone = pm[0].replace(/[^\d+]/g, ""); if (phone.length === 10) phone = "+91" + phone; if (phone.length === 12 && phone.startsWith("91")) phone = "+" + phone; if (phone.length === 13) phone = phone.slice(0,3)+" "+phone.slice(3,8)+" "+phone.slice(8); }
+    if (pm) { phone = pm[0].replace(/[^\d]/g, ""); if (phone.length > 10) phone = phone.slice(-10); phone = phone.slice(0,5) + " " + phone.slice(5); }
     const skip = /resume|curriculum|vitae|cv|profile|objective|summary|personal|details|contact|address|page|confidential/i;
     let name = "";
     for (let i = 0; i < Math.min(8, lines.length); i++) {
       const l = lines[i]; if (l.includes("@") || /\d{5,}/.test(l) || skip.test(l) || l.length < 3 || l.length > 50) continue;
       let c = l.replace(/[^a-zA-Z\s.]/g,"").trim().replace(/^(Mr|Mrs|Ms|Dr|Prof|Name|Candidate)\s*[.:]*\s*/i,"").trim();
+      // Handle camelCase or merged names like "TatsatTiwari" → "Tatsat Tiwari"
+      c = c.replace(/([a-z])([A-Z])/g, "$1 $2");
       const w = c.split(/\s+/).filter(x=>x.length>1);
       if (w.length >= 2 && w.length <= 4 && w.every(x=>/^[A-Za-z]/.test(x))) { name = w.map(x=>x.charAt(0).toUpperCase()+x.slice(1).toLowerCase()).join(" "); break; }
+      // Try single word that might be merged name
+      if (w.length === 1 && w[0].length >= 5) {
+        const split = w[0].replace(/([a-z])([A-Z])/g, "$1 $2");
+        if (split.includes(" ")) { name = split.split(/\s+/).map(x=>x.charAt(0).toUpperCase()+x.slice(1).toLowerCase()).join(" "); break; }
+      }
     }
     if (!name && email) { const en = email.split("@")[0].replace(/[._\-\d]/g," ").trim(); if (en.length>3) name = en.split(/\s+/).map(x=>x.charAt(0).toUpperCase()+x.slice(1).toLowerCase()).join(" "); }
     const cities = ["Mumbai","Delhi","Bangalore","Bengaluru","Hyderabad","Ahmedabad","Chennai","Kolkata","Pune","Jaipur","Lucknow","Nagpur","Indore","Bhopal","Gurugram","Gurgaon","Noida","Greater Noida","Chandigarh","Kochi","Dehradun","Bhubaneswar","Coimbatore","Mysore","Vadodara","Surat","Ranchi","Patna","Ghaziabad","Faridabad","Rajkot","Jodhpur","Nashik","Thane","Navi Mumbai","Vizag","Vijayawada","Madurai","Trivandrum","Mangalore","Agra","Meerut"];
@@ -978,6 +978,7 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
       scoreSoft: parseInt(v.scoreSoft)||0, scoreStability: parseInt(v.scoreStability)||0,
       scoreTech: parseInt(v.scoreTech)||0, scoreExp: parseInt(v.scoreExp)||0,
       assessmentNotes: v.assessmentNotes, owner: user?.name, cvFile: cvFile?.name,
+      linkedJobId: v.linkedJobId || null, linkedClient: v.linkedClient || null, linkedRole: v.role,
       aiMatchScore: aiMatch?.match_percentage, aiMatchSummary: aiMatch?.summary,
     };
     onSave(cand);
@@ -1232,7 +1233,7 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
 };
 
 // ── REQUIREMENTS (most critical page) ──────────────────────────────────
-const JobsPage = ({ user, perms }) => {
+const JobsPage = ({ user, perms, allCandidates, setAllCandidates }) => {
   const [search, setSearch] = useState(""); const [sel, setSel] = useState(null);
   const [statusF, setStatusF] = useState("Open");
   const [jobsData, setJobsData] = useState(JOBS);
@@ -1381,7 +1382,58 @@ const JobsPage = ({ user, perms }) => {
           </>}
         </div>
 
-        {/* Section 6: Share JD */}
+        {/* Section 6: Candidate Pipeline for this position */}
+        {(() => {
+          const PIPE_STAGES = ["New","Screening","Submitted to Client","Client Review","Interview Stage","HR Discussion","Offer","Joined","Not Joined","Account Manager Rejected"];
+          const PIPE_CLR = {"New":"#64748B","Screening":"#3B82F6","Submitted to Client":"#6366F1","Client Review":"#8B5CF6","Interview Stage":"#F59E0B","HR Discussion":"#EC4899","Offer":"#14B8A6","Joined":"#059669","Not Joined":"#EF4444","Account Manager Rejected":"#DC2626"};
+          const jobCandidates = (allCandidates||[]).filter(c => c.linkedJobId === sel.id || c.role === sel.title);
+          const byStage = {};
+          PIPE_STAGES.forEach(s => { byStage[s] = jobCandidates.filter(c => (c.pipelineStatus||c.status||"New") === s); });
+          const activeStages = PIPE_STAGES.filter(s => byStage[s].length > 0);
+          const canChangeStatus = user?.role === "Super Admin" || user?.role === "Recruiter" || user?.role === "Account Manager";
+
+          return <div style={{ marginTop: 16, padding: 16, borderRadius: 12, background: C.surface, border: `1px solid ${C.border}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: 11, color: C.textDim, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700 }}>Candidate pipeline ({jobCandidates.length} total)</div>
+              <div style={{ display: "flex", gap: 4 }}>
+                {PIPE_STAGES.slice(0, 8).map(s => {
+                  const count = byStage[s].length;
+                  return count > 0 ? <span key={s} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: (PIPE_CLR[s]||C.textMuted)+"18", color: PIPE_CLR[s]||C.textMuted, fontWeight: 700 }}>{count}</span> : null;
+                })}
+              </div>
+            </div>
+
+            {jobCandidates.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 20, color: C.textDim, fontSize: 13 }}>No candidates mapped to this position yet. Add candidates from the Candidates tab.</div>
+            ) : (
+              <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 8 }}>
+                {PIPE_STAGES.slice(0, 8).map(stage => (
+                  <div key={stage} style={{ minWidth: 160, flex: "0 0 160px", background: C.bg, borderRadius: 10, padding: 10, border: `1px solid ${C.border}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: PIPE_CLR[stage], textTransform: "uppercase", letterSpacing: "0.04em" }}>{stage.replace("Submitted to Client", "Submitted").replace("Interview Stage", "Interview").replace("Account Manager ", "AM ")}</span>
+                      <span style={{ fontSize: 10, width: 18, height: 18, borderRadius: 9, background: (PIPE_CLR[stage])+"18", color: PIPE_CLR[stage], display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>{byStage[stage].length}</span>
+                    </div>
+                    {byStage[stage].map(c => (
+                      <div key={c.id} style={{ padding: "8px 10px", borderRadius: 8, background: C.surface, marginBottom: 4, border: `1px solid ${C.border}`, cursor: canChangeStatus ? "pointer" : "default" }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{c.name}</div>
+                        <div style={{ fontSize: 10, color: C.textMuted }}>{c.experience || ""} {c.location ? "- " + c.location : ""}</div>
+                        {c.aiMatchScore && <div style={{ fontSize: 10, color: c.aiMatchScore >= 70 ? C.green : c.aiMatchScore >= 40 ? C.yellow : C.red, fontWeight: 700, marginTop: 2 }}>AI: {c.aiMatchScore}%</div>}
+                        {c.resumeScore > 0 && <div style={{ fontSize: 10, color: C.textDim }}>Score: {c.resumeScore}/100</div>}
+                        {canChangeStatus && <select value={c.pipelineStatus||c.status||"New"} onChange={e => { const ns = e.target.value; setAllCandidates(prev => prev.map(x => x.id === c.id ? {...x, pipelineStatus: ns, status: ns} : x)); }}
+                          style={{ width: "100%", marginTop: 4, padding: "3px 6px", fontSize: 10, borderRadius: 4, border: `1px solid ${C.border}`, background: C.bg, color: C.text, fontFamily: F.body, cursor: "pointer" }}>
+                          {PIPE_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>}
+                      </div>
+                    ))}
+                    {byStage[stage].length === 0 && <div style={{ fontSize: 10, color: C.textDim, textAlign: "center", padding: 10 }}>-</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>;
+        })()}
+
+        {/* Section 7: Share JD */}
         {sel.jobDescription && (
           <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
             <Btn small variant="primary" icon={Icons.linkedin} onClick={() => { const text = encodeURIComponent(`Hiring: ${sel.title}\nLocation: ${sel.location}\n\n${sel.jobDescription?.substring(0, 250)}...\n\nApply: careers@fxconsulting.in`); window.open(`https://www.linkedin.com/sharing/share-offsite/?url=https://fxconsulting.in&title=${encodeURIComponent(sel.title)}&summary=${text}`, "_blank"); }}>Share on LinkedIn</Btn>
@@ -2004,6 +2056,7 @@ export default function App() {
   const [page, setPage] = useState("dashboard");
   const [collapsed, setCollapsed] = useState(false);
   const [time, setTime] = useState(new Date());
+  const [allCandidates, setAllCandidates] = useState(CANDIDATES);
 
   useEffect(() => { const t = setInterval(()=>setTime(new Date()), 60000); return ()=>clearInterval(t); }, []);
 
@@ -2092,8 +2145,8 @@ export default function App() {
             {page==="dashboard" && <CommandCenter setPage={setPage} user={user} perms={perms} />}
             {page==="cv" && <CVHub />}
             {page==="clients" && <ClientsPage perms={perms} />}
-            {page==="candidates" && <CandidatesPage perms={perms} user={user} />}
-            {page==="jobs" && <JobsPage user={user} perms={perms} />}
+            {page==="candidates" && <CandidatesPage perms={perms} user={user} allCandidates={allCandidates} setAllCandidates={setAllCandidates} />}
+            {page==="jobs" && <JobsPage user={user} perms={perms} allCandidates={allCandidates} setAllCandidates={setAllCandidates} />}
             {page==="pipeline" && <PipelinePage user={user} perms={perms} />}
             {page==="interviews" && <InterviewsPage user={user} perms={perms} />}
             {page==="whatsapp" && <WhatsAppPage />}
