@@ -735,12 +735,204 @@ const CandidatesPage = ({ perms, user }) => {
 };
 
 // ── Add Candidate Form (CV + Assessment + CTC + Referral) ──────────────
+// ── CV Text Extraction Utilities ────────────────────────────────────────
+const INDIAN_CITIES = ["Mumbai","Delhi","Bangalore","Bengaluru","Hyderabad","Ahmedabad","Chennai","Kolkata","Pune","Jaipur","Lucknow","Kanpur","Nagpur","Indore","Thane","Bhopal","Visakhapatnam","Vizag","Patna","Vadodara","Ghaziabad","Ludhiana","Agra","Nashik","Faridabad","Meerut","Rajkot","Varanasi","Srinagar","Aurangabad","Dhanbad","Amritsar","Allahabad","Ranchi","Howrah","Coimbatore","Jabalpur","Gwalior","Vijayawada","Jodhpur","Madurai","Raipur","Kochi","Chandigarh","Mysore","Trivandrum","Thiruvananthapuram","Gurgaon","Gurugram","Noida","Greater Noida","Dehradun","Bhubaneswar","Mangalore","Navi Mumbai"];
+
+const extractFromCVText = (text) => {
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  // Email
+  const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+  const email = emailMatch ? emailMatch[0] : "";
+  // Phone — Indian patterns
+  const phoneMatch = text.match(/(?:\+91[\s-]?)?(?:\d[\s-]?){10,13}/) || text.match(/\d{5}[\s-]?\d{5}/);
+  let phone = phoneMatch ? phoneMatch[0].replace(/[^\d+]/g, "") : "";
+  if (phone.length === 10) phone = "+91 " + phone;
+  if (phone.length === 12 && phone.startsWith("91")) phone = "+" + phone;
+  // Name — first 1-2 lines, look for name pattern (2-4 capitalized words, no special chars)
+  let name = "";
+  for (let i = 0; i < Math.min(5, lines.length); i++) {
+    const line = lines[i].replace(/[^a-zA-Z\s.]/g, "").trim();
+    const words = line.split(/\s+/).filter(w => w.length > 1);
+    if (words.length >= 2 && words.length <= 5 && words.every(w => /^[A-Z]/.test(w)) && !line.includes("@") && !line.match(/resume|curriculum|vitae|phone|email|address/i)) {
+      name = words.join(" "); break;
+    }
+  }
+  if (!name && lines[0]) { const cleaned = lines[0].replace(/[^a-zA-Z\s]/g,"").trim(); if (cleaned.length > 3 && cleaned.length < 40) name = cleaned; }
+  // Location — match Indian cities
+  let location = "";
+  const textLower = text.toLowerCase();
+  for (const city of INDIAN_CITIES) {
+    if (textLower.includes(city.toLowerCase())) { location = city; break; }
+  }
+  // Skills — look for common tech skills
+  const SKILL_PATTERNS = ["Java","Python","JavaScript","React","Node.js","Angular","Vue","TypeScript","AWS","Azure","GCP","Docker","Kubernetes","SQL","MongoDB","PostgreSQL","MySQL","Spring Boot","Django","Flask","C++","C#",".NET","Ruby","Go","Rust","Swift","Kotlin","Figma","Tableau","Power BI","SAP","HVAC","Sales","Marketing","Excel","Git","Jenkins","CI/CD","Agile","Scrum","Machine Learning","ML","AI","NLP","Data Science","TensorFlow","PyTorch","Spark","Hadoop","Salesforce","ServiceNow","Selenium","REST API","Microservices","Linux","DevOps","Terraform","Ansible"];
+  const skills = SKILL_PATTERNS.filter(s => {
+    const regex = new RegExp("\\b" + s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "\\b", "i");
+    return regex.test(text);
+  });
+  // Experience — look for patterns like "5 years", "5+ yrs"
+  const expMatch = text.match(/(\d{1,2})\+?\s*(?:years?|yrs?)\s*(?:of)?\s*(?:experience|exp)?/i);
+  const experience = expMatch ? `${expMatch[1]} yrs` : "";
+
+  return { name, email, phone, location, skills: skills.slice(0, 8), experience, rawText: text };
+};
+
+// ── PDF Text Extraction (loads pdf.js from CDN) ────────────────────────
+const loadPdfJs = () => new Promise((resolve) => {
+  if (window.pdfjsLib) { resolve(window.pdfjsLib); return; }
+  const script = document.createElement("script");
+  script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+  script.onload = () => {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+    resolve(window.pdfjsLib);
+  };
+  document.head.appendChild(script);
+});
+
+const extractPdfText = async (file) => {
+  const pdfjsLib = await loadPdfJs();
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let text = "";
+  for (let i = 1; i <= Math.min(pdf.numPages, 5); i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(item => item.str).join(" ") + "\n";
+  }
+  return text;
+};
+
+// ── DOCX Text Extraction (loads mammoth from CDN) ──────────────────────
+const loadMammoth = () => new Promise((resolve) => {
+  if (window.mammoth) { resolve(window.mammoth); return; }
+  const script = document.createElement("script");
+  script.src = "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js";
+  script.onload = () => resolve(window.mammoth);
+  document.head.appendChild(script);
+});
+
+const extractDocxText = async (file) => {
+  const mammoth = await loadMammoth();
+  const arrayBuffer = await file.arrayBuffer();
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  return result.value;
+};
+
+// ── AI Match Analysis (calls Claude API) ───────────────────────────────
+const analyzeMatchWithAI = async (cvText, jobDescription, jobTitle) => {
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1000,
+        messages: [{ role: "user", content: `You are a recruitment expert. Analyze how well this candidate's CV matches the job description.
+
+JOB TITLE: ${jobTitle}
+
+JOB DESCRIPTION:
+${jobDescription || "Not provided"}
+
+CANDIDATE CV TEXT:
+${cvText.substring(0, 3000)}
+
+Respond ONLY with a JSON object (no markdown, no backticks):
+{
+  "match_percentage": <number 0-100>,
+  "summary": "<2-3 sentence summary of match>",
+  "matching_skills": ["skill1", "skill2"],
+  "missing_skills": ["skill1", "skill2"],
+  "experience_match": "<one line>",
+  "recommendation": "Strong Match" | "Good Match" | "Partial Match" | "Weak Match"
+}` }],
+      })
+    });
+    const data = await response.json();
+    const text = data.content?.[0]?.text || "{}";
+    const clean = text.replace(/```json|```/g, "").trim();
+    return JSON.parse(clean);
+  } catch (err) {
+    console.error("AI match error:", err);
+    return null;
+  }
+};
+
+// ── Add Candidate Form (AI-powered) ────────────────────────────────────
 const AddCandidateForm = ({ user, onSave, onClose }) => {
   const [v, setV] = useState({});
   const [cvFile, setCvFile] = useState(null);
-  const [step, setStep] = useState(1); // 1=basic, 2=CTC+details, 3=assessment
+  const [cvText, setCvText] = useState("");
+  const [parsing, setParsing] = useState(false);
+  const [parseStatus, setParseStatus] = useState(""); // "", "parsing", "done", "error"
+  const [step, setStep] = useState(1); // 1=upload CV, 2=details+role, 3=CTC, 4=assessment
   const [saved, setSaved] = useState(false);
+  const [aiMatch, setAiMatch] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
   const set = (k, val) => setV(p => ({...p, [k]: val}));
+
+  // ── Handle CV upload and auto-parse ──
+  const handleCVUpload = async (file) => {
+    if (!file) return;
+    setCvFile(file);
+    setParsing(true);
+    setParseStatus("parsing");
+
+    try {
+      let text = "";
+      const ext = file.name.toLowerCase().split(".").pop();
+
+      if (ext === "pdf") {
+        text = await extractPdfText(file);
+      } else if (ext === "docx" || ext === "doc") {
+        text = await extractDocxText(file);
+      } else if (ext === "txt") {
+        text = await file.text();
+      }
+
+      if (text.length < 20) { setParseStatus("error"); setParsing(false); return; }
+
+      setCvText(text);
+      const parsed = extractFromCVText(text);
+
+      // Auto-fill form fields
+      setV(prev => ({
+        ...prev,
+        name: parsed.name || prev.name || "",
+        email: parsed.email || prev.email || "",
+        phone: parsed.phone || prev.phone || "",
+        location: parsed.location || prev.location || "",
+        experience: parsed.experience || prev.experience || "",
+        skills: parsed.skills.join(", ") || prev.skills || "",
+      }));
+
+      setParseStatus("done");
+    } catch (err) {
+      console.error("CV parse error:", err);
+      setParseStatus("error");
+    }
+    setParsing(false);
+  };
+
+  // ── Handle requirement selection + AI match ──
+  const handleRoleSelect = async (jobTitle) => {
+    set("role", jobTitle);
+    const job = JOBS.find(j => j.title === jobTitle);
+    if (job) {
+      set("linkedJobId", job.id);
+      set("linkedClient", job.client);
+      set("linkedJD", job.jobDescription || job.description || "");
+
+      // Trigger AI match if we have CV text
+      if (cvText && (job.jobDescription || job.description || job.skills?.length)) {
+        setAiLoading(true);
+        const jdText = (job.jobDescription || "") + "\n" + (job.description || "") + "\nRequired skills: " + (job.skills || []).join(", ") + "\nLocation: " + job.location + "\nCTC: " + job.ctcRange;
+        const result = await analyzeMatchWithAI(cvText, jdText, jobTitle);
+        setAiMatch(result);
+        setAiLoading(false);
+      }
+    }
+  };
 
   const handleSave = () => {
     const cand = {
@@ -752,10 +944,10 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
       scoreSoft: parseInt(v.scoreSoft)||0, scoreStability: parseInt(v.scoreStability)||0,
       scoreTech: parseInt(v.scoreTech)||0, scoreExp: parseInt(v.scoreExp)||0,
       assessmentNotes: v.assessmentNotes, owner: user?.name, cvFile: cvFile?.name,
+      aiMatchScore: aiMatch?.match_percentage, aiMatchSummary: aiMatch?.summary,
     };
     onSave(cand);
     setSaved(true);
-    // TODO: call API → uploadCandidateWithCV(formData)
   };
 
   if (saved) return (
@@ -763,6 +955,7 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
       <div style={{ width:48, height:48, borderRadius:24, background:C.green+"20", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16", color:C.green }}>{Icons.check}</div>
       <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:F.display, marginBottom:6 }}>Candidate added!</div>
       <div style={{ fontSize:13, color:C.textMuted }}>CV uploaded. Owner: {user?.name}. Status: New.</div>
+      {aiMatch && <div style={{ marginTop:8, fontSize:13, color:C.accent }}>AI Match: {aiMatch.match_percentage}% — {aiMatch.recommendation}</div>}
     </div>
   );
 
@@ -772,62 +965,151 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
   return <div>
     {/* Step indicators */}
     <div style={{ display:"flex", gap:4, marginBottom:20 }}>
-      {[{n:1,l:"Basic Info"},{n:2,l:"CTC & Details"},{n:3,l:"Assessment"}].map(s => (
-        <button key={s.n} onClick={()=>setStep(s.n)} style={{ flex:1, padding:"8px", borderRadius:8, border:`1px solid ${step===s.n?C.accent:C.border}`, background:step===s.n?C.accentGlow:"transparent", color:step===s.n?C.accent:C.textMuted, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:F.body }}>
+      {[{n:1,l:"Upload CV"},{n:2,l:"Profile & Role"},{n:3,l:"CTC & Details"},{n:4,l:"Assessment"}].map(s => (
+        <button key={s.n} onClick={()=>s.n<=2||parseStatus==="done"?setStep(s.n):null} style={{ flex:1, padding:"8px", borderRadius:8, border:`1px solid ${step===s.n?C.accent:C.border}`, background:step===s.n?C.accentGlow:"transparent", color:step===s.n?C.accent:C.textMuted, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:F.body, opacity:s.n>2&&parseStatus!=="done"?0.4:1 }}>
           {s.n}. {s.l}
         </button>
       ))}
     </div>
 
+    {/* ── STEP 1: Upload CV ── */}
     {step===1 && <div>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-        <div><label style={labelStyle}>Full Name *</label><input value={v.name||""} onChange={e=>set("name",e.target.value)} style={inputStyle} placeholder="Candidate name" /></div>
-        <div><label style={labelStyle}>Email</label><input value={v.email||""} onChange={e=>set("email",e.target.value)} style={inputStyle} placeholder="email@example.com" /></div>
-        <div><label style={labelStyle}>Phone *</label><input value={v.phone||""} onChange={e=>set("phone",e.target.value)} style={inputStyle} placeholder="+91 98765 43210" /></div>
-        <div><label style={labelStyle}>Role / Designation (linked to requirement)</label>
-          <select value={v.role||""} onChange={e=>{set("role",e.target.value); const j=JOBS.find(j=>j.title===e.target.value); if(j){set("linkedJobId",j.id);set("linkedClient",j.client);}}} style={inputStyle}>
-            <option value="">Select from open positions or type below</option>
-            {JOBS.filter(j=>j.status==="Open").map(j=><option key={j.id} value={j.title}>{j.title} — {j.client} ({j.location})</option>)}
-            <option value="__custom">Other (type manually)</option>
-          </select>
-          {v.role==="__custom" && <input value={v.customRole||""} onChange={e=>{set("customRole",e.target.value);set("role",e.target.value);}} style={{...inputStyle,marginTop:6}} placeholder="Type role manually" />}
-          {v.linkedClient && <div style={{fontSize:11,color:C.green,marginTop:4}}>Linked to: {v.linkedClient}</div>}
+      <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:F.display, marginBottom:4 }}>Upload candidate CV</div>
+      <div style={{ fontSize:12, color:C.textMuted, marginBottom:16 }}>Upload the CV first — our AI will automatically extract name, email, phone, location, and skills.</div>
+
+      <div style={{ border:`2px dashed ${parseStatus==="done"?C.green:parsing?C.accent:C.border}`, borderRadius:14, padding:32, textAlign:"center", cursor:"pointer", background:parseStatus==="done"?C.green+"06":parsing?C.accentGlow:C.surface, transition:"all .25s" }}
+        onClick={()=>!parsing&&document.getElementById("cv-input-ai").click()}
+        onDragOver={e=>{e.preventDefault();if(!parsing){e.currentTarget.style.borderColor=C.accent;e.currentTarget.style.background=C.accentGlow;}}}
+        onDragLeave={e=>{e.preventDefault();e.currentTarget.style.borderColor=parseStatus==="done"?C.green:C.border;e.currentTarget.style.background=parseStatus==="done"?C.green+"06":C.surface;}}
+        onDrop={e=>{e.preventDefault();const file=e.dataTransfer.files[0];if(file&&!parsing)handleCVUpload(file);}}>
+        <input id="cv-input-ai" type="file" accept=".pdf,.doc,.docx,.txt" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleCVUpload(e.target.files[0]);}} />
+
+        {parsing ? <div>
+          <div style={{ width:40, height:40, borderRadius:20, border:`3px solid ${C.border}`, borderTopColor:C.accent, animation:"spin 1s linear infinite", margin:"0 auto 12" }} />
+          <div style={{color:C.accent,fontWeight:700,fontSize:14}}>Parsing CV with AI...</div>
+          <div style={{color:C.textMuted,fontSize:12,marginTop:4}}>Extracting name, email, phone, skills</div>
         </div>
+        : parseStatus==="done" ? <div>
+          <div style={{color:C.green,fontWeight:700,fontSize:16,marginBottom:6}}>{Icons.check} CV parsed successfully!</div>
+          <div style={{color:C.text,fontSize:13,fontWeight:600}}>{cvFile.name}</div>
+          <div style={{color:C.textMuted,fontSize:12,marginTop:2}}>{(cvFile.size/1024/1024).toFixed(2)} MB • Click to replace</div>
+        </div>
+        : parseStatus==="error" ? <div>
+          <div style={{color:C.red,fontWeight:700,fontSize:14,marginBottom:4}}>Could not parse this file</div>
+          <div style={{color:C.textMuted,fontSize:12}}>Try a different format (PDF works best)</div>
+        </div>
+        : <div>
+          <div style={{color:C.textMuted,fontSize:36,marginBottom:10}}>{Icons.upload}</div>
+          <div style={{color:C.text,fontWeight:700,fontSize:16}}>Drag & drop CV here</div>
+          <div style={{color:C.textDim,fontSize:13,marginTop:6}}>or click to browse</div>
+          <div style={{color:C.textDim,fontSize:11,marginTop:8}}>PDF, DOC, DOCX, TXT — up to 20MB</div>
+        </div>}
+      </div>
+
+      {/* Show extracted data preview */}
+      {parseStatus==="done" && <div style={{ marginTop:16, padding:16, borderRadius:12, background:C.surface, border:`1px solid ${C.green}30` }}>
+        <div style={{ fontSize:12, fontWeight:700, color:C.green, marginBottom:10, display:"flex", alignItems:"center", gap:6 }}>{Icons.zap} Auto-extracted from CV</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+          <div><span style={{fontSize:10,color:C.textDim}}>Name</span><div style={{fontSize:14,fontWeight:700,color:v.name?C.text:C.red}}>{v.name || "Not detected — fill manually"}</div></div>
+          <div><span style={{fontSize:10,color:C.textDim}}>Email</span><div style={{fontSize:14,color:v.email?C.text:C.textDim}}>{v.email || "Not found"}</div></div>
+          <div><span style={{fontSize:10,color:C.textDim}}>Phone</span><div style={{fontSize:14,color:v.phone?C.text:C.textDim}}>{v.phone || "Not found"}</div></div>
+          <div><span style={{fontSize:10,color:C.textDim}}>Location</span><div style={{fontSize:14,color:v.location?C.text:C.textDim}}>{v.location || "Not found"}</div></div>
+          <div><span style={{fontSize:10,color:C.textDim}}>Experience</span><div style={{fontSize:14,color:v.experience?C.text:C.textDim}}>{v.experience || "Not found"}</div></div>
+          <div><span style={{fontSize:10,color:C.textDim}}>Skills detected</span><div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:2}}>{(v.skills||"").split(",").filter(Boolean).slice(0,5).map(s=><span key={s} style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:C.accentGlow,color:C.accentLight}}>{s.trim()}</span>)}</div></div>
+        </div>
+        <div style={{fontSize:11,color:C.textDim,marginTop:10}}>You can edit any field in the next step.</div>
+      </div>}
+
+      <div style={{ display:"flex", justifyContent:"flex-end", marginTop:16, gap:8 }}>
+        {parseStatus!=="done" && <Btn variant="secondary" onClick={()=>setStep(2)}>Skip — enter manually</Btn>}
+        {parseStatus==="done" && <Btn onClick={()=>setStep(2)}>Next — select role & review</Btn>}
+      </div>
+    </div>}
+
+    {/* ── STEP 2: Profile + Role Selection + AI Match ── */}
+    {step===2 && <div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+        <div><label style={labelStyle}>Full Name *</label><input value={v.name||""} onChange={e=>set("name",e.target.value)} style={{...inputStyle, borderColor:v.name?C.green+"50":C.border}} placeholder="Candidate name" /></div>
+        <div><label style={labelStyle}>Email</label><input value={v.email||""} onChange={e=>set("email",e.target.value)} style={{...inputStyle, borderColor:v.email?C.green+"50":C.border}} placeholder="email@example.com" /></div>
+        <div><label style={labelStyle}>Phone *</label><input value={v.phone||""} onChange={e=>set("phone",e.target.value)} style={{...inputStyle, borderColor:v.phone?C.green+"50":C.border}} placeholder="+91 98765 43210" /></div>
+        <div><label style={labelStyle}>Location</label><input value={v.location||""} onChange={e=>set("location",e.target.value)} style={{...inputStyle, borderColor:v.location?C.green+"50":C.border}} placeholder="City" /></div>
         <div><label style={labelStyle}>Experience</label><input value={v.experience||""} onChange={e=>set("experience",e.target.value)} style={inputStyle} placeholder="5 yrs" /></div>
-        <div><label style={labelStyle}>Location</label><input value={v.location||""} onChange={e=>set("location",e.target.value)} style={inputStyle} placeholder="Bangalore" /></div>
-        <div><label style={labelStyle}>Skills (comma separated)</label><input value={v.skills||""} onChange={e=>set("skills",e.target.value)} style={inputStyle} placeholder="Java, Spring Boot, AWS" /></div>
         <div><label style={labelStyle}>Source</label>
           <select value={v.source||""} onChange={e=>set("source",e.target.value)} style={inputStyle}>
             <option value="">Select</option>
             {["LinkedIn","Naukri","Indeed","Referral","Direct","Job Fair","Monster"].map(s=><option key={s} value={s}>{s}</option>)}
           </select>
         </div>
+        <div style={{gridColumn:"1/-1"}}><label style={labelStyle}>Skills (comma separated)</label><input value={v.skills||""} onChange={e=>set("skills",e.target.value)} style={{...inputStyle, borderColor:(v.skills||"").length>3?C.green+"50":C.border}} placeholder="Java, Spring Boot, AWS" /></div>
       </div>
-      <div style={{ marginTop:16 }}>
-        <label style={labelStyle}>Upload CV (PDF / DOC / DOCX) — drag & drop or click</label>
-        <div style={{ border:`2px dashed ${cvFile?C.green:C.border}`, borderRadius:10, padding:24, textAlign:"center", cursor:"pointer", background:cvFile?C.green+"08":C.surface, transition:"all .2s" }}
-          onClick={()=>document.getElementById("cv-input").click()}
-          onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor=C.accent;e.currentTarget.style.background=C.accentGlow;}}
-          onDragLeave={e=>{e.preventDefault();e.currentTarget.style.borderColor=cvFile?C.green:C.border;e.currentTarget.style.background=cvFile?C.green+"08":C.surface;}}
-          onDrop={e=>{e.preventDefault();e.currentTarget.style.borderColor=C.green;e.currentTarget.style.background=C.green+"08";const file=e.dataTransfer.files[0];if(file)setCvFile(file);}}>
-          <input id="cv-input" type="file" accept=".pdf,.doc,.docx" style={{display:"none"}} onChange={e=>setCvFile(e.target.files[0])} />
-          {cvFile ? <div>
-            <div style={{color:C.green,fontWeight:700,fontSize:14,marginBottom:4}}>{Icons.check} {cvFile.name}</div>
-            <div style={{color:C.textMuted,fontSize:12}}>{(cvFile.size/1024/1024).toFixed(2)} MB • Ready to upload</div>
-          </div>
-          : <div>
-            <div style={{color:C.textMuted,fontSize:32,marginBottom:8}}>{Icons.upload}</div>
-            <div style={{color:C.text,fontWeight:600,fontSize:14}}>Drag & drop CV here</div>
-            <div style={{color:C.textDim,fontSize:12,marginTop:4}}>or click to browse • PDF, DOC, DOCX up to 20MB</div>
-          </div>}
+
+      {/* Role linked to Requirements */}
+      <div style={{ marginTop:16, padding:16, borderRadius:12, background:C.surface, border:`1px solid ${C.border}` }}>
+        <label style={{...labelStyle, fontSize:12}}>Map to open requirement</label>
+        <select value={v.role||""} onChange={e=>handleRoleSelect(e.target.value)} style={{...inputStyle, fontSize:14, fontWeight:600}}>
+          <option value="">Select open position to map candidate</option>
+          {JOBS.filter(j=>j.status==="Open").map(j=><option key={j.id} value={j.title}>{j.title} — {j.client} ({j.location}) [{j.ctcRange}]</option>)}
+          <option value="__custom">Other — type manually</option>
+        </select>
+        {v.role==="__custom" && <input value={v.customRole||""} onChange={e=>{set("customRole",e.target.value);}} style={{...inputStyle,marginTop:8}} placeholder="Type role/designation manually" />}
+        {v.linkedClient && <div style={{fontSize:12,color:C.green,marginTop:6,fontWeight:600}}>Mapped to: {v.linkedClient} — {v.role}</div>}
+      </div>
+
+      {/* ── AI MATCH ANALYSIS ── */}
+      {v.role && v.role !== "__custom" && (
+        <div style={{ marginTop:14, padding:16, borderRadius:12, border:`1px solid ${aiMatch?(aiMatch.match_percentage>=70?C.green:aiMatch.match_percentage>=40?C.yellow:C.red)+"40":C.accent+"30"}`, background:aiMatch?`${aiMatch.match_percentage>=70?C.green:aiMatch.match_percentage>=40?C.yellow:C.red}08`:C.accentGlow }}>
+          <div style={{ fontSize:12, fontWeight:700, color:C.accent, marginBottom:8, display:"flex", alignItems:"center", gap:6 }}>{Icons.zap} AI match analysis — CV vs job description</div>
+
+          {aiLoading ? (
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <div style={{ width:20, height:20, borderRadius:10, border:`2px solid ${C.border}`, borderTopColor:C.accent, animation:"spin .8s linear infinite" }} />
+              <span style={{fontSize:13,color:C.textMuted}}>Claude AI analyzing match...</span>
+            </div>
+          ) : aiMatch ? (
+            <div>
+              <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:12 }}>
+                <div style={{ fontSize:42, fontWeight:900, fontFamily:F.display, color:aiMatch.match_percentage>=70?C.green:aiMatch.match_percentage>=40?C.yellow:C.red }}>
+                  {aiMatch.match_percentage}%
+                </div>
+                <div>
+                  <div style={{ fontSize:14, fontWeight:700, color:aiMatch.match_percentage>=70?C.green:aiMatch.match_percentage>=40?C.yellow:C.red }}>{aiMatch.recommendation}</div>
+                  <div style={{ fontSize:12, color:C.textMuted, marginTop:2, lineHeight:1.5 }}>{aiMatch.summary}</div>
+                </div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+                <div>
+                  <div style={{ fontSize:10, color:C.green, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>Matching skills</div>
+                  <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+                    {(aiMatch.matching_skills||[]).map(s=><span key={s} style={{fontSize:11,padding:"3px 8px",borderRadius:8,background:C.green+"18",color:C.green,fontWeight:600}}>{s}</span>)}
+                    {(!aiMatch.matching_skills||aiMatch.matching_skills.length===0)&&<span style={{fontSize:11,color:C.textDim}}>None identified</span>}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize:10, color:C.red, fontWeight:700, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6 }}>Missing skills</div>
+                  <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
+                    {(aiMatch.missing_skills||[]).map(s=><span key={s} style={{fontSize:11,padding:"3px 8px",borderRadius:8,background:C.red+"18",color:C.red,fontWeight:600}}>{s}</span>)}
+                    {(!aiMatch.missing_skills||aiMatch.missing_skills.length===0)&&<span style={{fontSize:11,color:C.textDim}}>None — full match!</span>}
+                  </div>
+                </div>
+              </div>
+              {aiMatch.experience_match && <div style={{marginTop:8,fontSize:12,color:C.textMuted}}><strong>Experience:</strong> {aiMatch.experience_match}</div>}
+            </div>
+          ) : (
+            <div style={{fontSize:12,color:C.textMuted}}>
+              {cvText ? "Click the job above to run AI analysis" : "Upload a CV in Step 1 to enable AI matching"}
+            </div>
+          )}
         </div>
-      </div>
-      <div style={{ display:"flex", justifyContent:"flex-end", marginTop:16 }}>
-        <Btn onClick={()=>setStep(2)}>Next → CTC & Details</Btn>
+      )}
+
+      <div style={{ display:"flex", justifyContent:"space-between", marginTop:16 }}>
+        <Btn variant="secondary" onClick={()=>setStep(1)}>← Back</Btn>
+        <Btn onClick={()=>setStep(3)}>Next → CTC & Details</Btn>
       </div>
     </div>}
 
-    {step===2 && <div>
+    {/* ── STEP 3: CTC & Details ── */}
+    {step===3 && <div>
       <div style={{ fontSize:13, fontWeight:600, color:C.text, marginBottom:12 }}>Compensation details</div>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
         <div><label style={labelStyle}>Current CTC — Fixed (LPA)</label><input value={v.ctcFixed||""} onChange={e=>set("ctcFixed",e.target.value)} style={inputStyle} placeholder="12" /></div>
@@ -850,20 +1132,20 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
       </div>
       <div style={{ fontSize:13, fontWeight:600, color:C.text, marginTop:16, marginBottom:12 }}>Referral details (if any)</div>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-        <div><label style={labelStyle}>Referral Given By (name)</label><input value={v.referralName||""} onChange={e=>set("referralName",e.target.value)} style={inputStyle} placeholder="Referrer name" /></div>
+        <div><label style={labelStyle}>Referral Given By</label><input value={v.referralName||""} onChange={e=>set("referralName",e.target.value)} style={inputStyle} placeholder="Referrer name" /></div>
         <div><label style={labelStyle}>Referral Phone</label><input value={v.referralPhone||""} onChange={e=>set("referralPhone",e.target.value)} style={inputStyle} placeholder="+91 98765 43210" /></div>
       </div>
-      <div style={{ fontSize:11, color:C.textDim, marginTop:6 }}>If referral candidate joins, referrer is eligible for referral bonus.</div>
       <div style={{ display:"flex", justifyContent:"space-between", marginTop:16 }}>
-        <Btn variant="secondary" onClick={()=>setStep(1)}>← Back</Btn>
-        <Btn onClick={()=>setStep(3)}>Next → Assessment</Btn>
+        <Btn variant="secondary" onClick={()=>setStep(2)}>← Back</Btn>
+        <Btn onClick={()=>setStep(4)}>Next → Assessment</Btn>
       </div>
     </div>}
 
-    {step===3 && <div>
-      <div style={{ fontSize:13, fontWeight:600, color:C.text, marginBottom:12 }}>Your assessment of this candidate (rate 1-10)</div>
+    {/* ── STEP 4: Assessment ── */}
+    {step===4 && <div>
+      <div style={{ fontSize:13, fontWeight:600, color:C.text, marginBottom:12 }}>Your assessment (rate 1-10)</div>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-        {[{k:"scoreSoft",l:"Soft Skills"},{k:"scoreStability",l:"Stability (tenure, loyalty)"},{k:"scoreTech",l:"Technical Knowledge"},{k:"scoreExp",l:"Relevant Experience"}].map(s => (
+        {[{k:"scoreSoft",l:"Soft Skills"},{k:"scoreStability",l:"Stability"},{k:"scoreTech",l:"Technical Knowledge"},{k:"scoreExp",l:"Relevant Experience"}].map(s => (
           <div key={s.k}>
             <label style={labelStyle}>{s.l}</label>
             <div style={{ display:"flex", gap:4 }}>
@@ -879,23 +1161,30 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
       </div>
       <div style={{ marginTop:12 }}>
         <label style={labelStyle}>Assessment Notes</label>
-        <textarea value={v.assessmentNotes||""} onChange={e=>set("assessmentNotes",e.target.value)} rows={3}
-          style={{ ...inputStyle, resize:"vertical" }} placeholder="Overall impression, strengths, concerns..." />
+        <textarea value={v.assessmentNotes||""} onChange={e=>set("assessmentNotes",e.target.value)} rows={3} style={{ ...inputStyle, resize:"vertical" }} placeholder="Strengths, concerns, overall impression..." />
       </div>
-      <div style={{ marginTop:12, padding:12, borderRadius:8, background:C.surface, border:`1px solid ${C.border}` }}>
-        <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>Overall Score</div>
-        <div style={{ fontSize:28, fontWeight:800, fontFamily:F.display, color:C.accent }}>
-          {[v.scoreSoft,v.scoreStability,v.scoreTech,v.scoreExp].filter(Boolean).length > 0
-            ? Math.round([v.scoreSoft,v.scoreStability,v.scoreTech,v.scoreExp].filter(Boolean).reduce((a,b)=>a+parseInt(b),0) / [v.scoreSoft,v.scoreStability,v.scoreTech,v.scoreExp].filter(Boolean).length * 10)
-            : "—"}
-          <span style={{ fontSize:14, color:C.textDim }}>/100</span>
+      <div style={{ marginTop:12, padding:12, borderRadius:8, background:C.surface, border:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div>
+          <div style={{ fontSize:11, color:C.textDim }}>Overall Score</div>
+          <div style={{ fontSize:28, fontWeight:800, fontFamily:F.display, color:C.accent }}>
+            {[v.scoreSoft,v.scoreStability,v.scoreTech,v.scoreExp].filter(Boolean).length > 0
+              ? Math.round([v.scoreSoft,v.scoreStability,v.scoreTech,v.scoreExp].filter(Boolean).reduce((a,b)=>a+parseInt(b),0) / [v.scoreSoft,v.scoreStability,v.scoreTech,v.scoreExp].filter(Boolean).length * 10)
+              : "—"}
+            <span style={{ fontSize:14, color:C.textDim }}>/100</span>
+          </div>
         </div>
+        {aiMatch && <div style={{ textAlign:"right" }}>
+          <div style={{ fontSize:11, color:C.textDim }}>AI Match</div>
+          <div style={{ fontSize:28, fontWeight:800, fontFamily:F.display, color:aiMatch.match_percentage>=70?C.green:aiMatch.match_percentage>=40?C.yellow:C.red }}>{aiMatch.match_percentage}%</div>
+        </div>}
       </div>
       <div style={{ display:"flex", justifyContent:"space-between", marginTop:16 }}>
-        <Btn variant="secondary" onClick={()=>setStep(2)}>← Back</Btn>
+        <Btn variant="secondary" onClick={()=>setStep(3)}>← Back</Btn>
         <Btn variant="success" icon={Icons.check} onClick={handleSave}>Save Candidate</Btn>
       </div>
     </div>}
+
+    <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
   </div>;
 };
 
