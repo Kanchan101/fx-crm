@@ -8,6 +8,11 @@ const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/auth');
 const clientRoutes = require('./routes/clients');
 const teamRoutes = require('./routes/team');
+const requirementRoutes = require('./routes/requirements');
+const candidateRoutes = require('./routes/candidates');
+const pipelineRoutes = require('./routes/pipeline');
+const interviewRoutes = require('./routes/interviews');
+const reportRoutes = require('./routes/reports');
 const { authenticate } = require('./middleware/auth');
 
 const app = express();
@@ -44,13 +49,11 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/clients', authenticate, clientRoutes);
 app.use('/api/team', authenticate, teamRoutes);
-
-// Future routes:
-// app.use('/api/requirements', authenticate, requirementRoutes);
-// app.use('/api/candidates', authenticate, candidateRoutes);
-// app.use('/api/pipeline', authenticate, pipelineRoutes);
-// app.use('/api/interviews', authenticate, interviewRoutes);
-// app.use('/api/reports', authenticate, reportRoutes);
+app.use('/api/requirements', authenticate, requirementRoutes);
+app.use('/api/candidates', authenticate, candidateRoutes);
+app.use('/api/pipeline', authenticate, pipelineRoutes);
+app.use('/api/interviews', authenticate, interviewRoutes);
+app.use('/api/reports', authenticate, reportRoutes);
 
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
