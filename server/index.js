@@ -9,6 +9,10 @@ const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
 
+// Node 18+ has native fetch, for older versions try node-fetch
+let nodeFetch;
+try { nodeFetch = typeof globalThis.fetch === 'function' ? globalThis.fetch : require('node-fetch'); } catch(e) { nodeFetch = null; }
+
 const app = express();
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
@@ -684,6 +688,115 @@ app.post('/api/whatsapp/send', auth, async (req, res) => {
     [candidate_id, phone, message, template_name]
   );
   res.json(result.rows[0]);
+});
+
+// ════════════════════════════════════════════════════════
+// AI — Claude-powered CV parsing & JD matching
+// ════════════════════════════════════════════════════════
+
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+
+const callClaude = async (prompt) => {
+  if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
+  const fetchFn = globalThis.fetch || nodeFetch;
+  if (!fetchFn) throw new Error('fetch not available - upgrade to Node 18+');
+  const res = await fetchFn('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Claude API error: ${res.status} ${err}`);
+  }
+  const data = await res.json();
+  return data.content?.[0]?.text || '';
+};
+
+// Parse CV text → extract candidate details
+app.post('/api/ai/parse-cv', auth, async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || text.length < 30) return res.status(400).json({ error: 'CV text too short' });
+
+    const prompt = `You are an expert Indian recruitment CV parser. Extract candidate details from this resume text accurately.
+
+RESUME TEXT:
+${text.substring(0, 5000)}
+
+Respond ONLY with a valid JSON object. No markdown, no backticks, no explanation before or after. Just the JSON:
+{
+  "name": "candidate full name",
+  "email": "email or empty string",
+  "phone": "phone with +91 prefix or empty string",
+  "location": "current city or empty string",
+  "experience": "total years like 5 yrs or empty string",
+  "current_role": "current/latest job title or empty string",
+  "current_company": "current/latest company or empty string",
+  "skills": ["skill1", "skill2", "skill3"],
+  "education": "highest degree and college or empty string"
+}
+
+Rules:
+- Name: person's full name only, never company name or document title
+- Phone: always add +91 prefix for Indian 10-digit numbers
+- Location: current city of residence, not hometown
+- Experience: total professional experience in years
+- Skills: top 8 technical and professional skills found in CV
+- If not found, use empty string or empty array`;
+
+    const response = await callClaude(prompt);
+    const clean = response.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    res.json(parsed);
+  } catch (err) {
+    console.error('AI parse error:', err.message);
+    res.status(500).json({ error: 'AI parsing failed: ' + err.message });
+  }
+});
+
+// Match CV against Job Description
+app.post('/api/ai/match-jd', auth, async (req, res) => {
+  try {
+    const { cvText, jobDescription, jobTitle } = req.body;
+    if (!cvText || !jobTitle) return res.status(400).json({ error: 'CV text and job title required' });
+
+    const prompt = `You are a senior recruitment consultant. Analyze how well this candidate's CV matches the job requirements.
+
+JOB TITLE: ${jobTitle}
+
+JOB DESCRIPTION:
+${jobDescription || 'Not provided'}
+
+CANDIDATE CV:
+${cvText.substring(0, 4000)}
+
+Respond ONLY with valid JSON. No markdown, no backticks:
+{
+  "match_percentage": <number 0-100>,
+  "summary": "2-3 sentence match summary",
+  "matching_skills": ["skill1", "skill2"],
+  "missing_skills": ["skill1", "skill2"],
+  "experience_match": "one line about experience fit",
+  "recommendation": "Strong Match" or "Good Match" or "Partial Match" or "Weak Match"
+}`;
+
+    const response = await callClaude(prompt);
+    const clean = response.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    res.json(parsed);
+  } catch (err) {
+    console.error('AI match error:', err.message);
+    res.status(500).json({ error: 'AI matching failed: ' + err.message });
+  }
 });
 
 // ════════════════════════════════════════════════════════

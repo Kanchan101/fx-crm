@@ -737,50 +737,64 @@ const CandidatesPage = ({ perms, user }) => {
 // ── Add Candidate Form (CV + Assessment + CTC + Referral) ──────────────
 // ── CV Text Extraction Utilities ────────────────────────────────────────
 
-// AI-powered CV parsing — sends CV text to Claude for accurate extraction
+const API_BASE = process.env.REACT_APP_API_URL || '';
+
+// Call backend AI for CV parsing (Claude via server-side API key)
 const extractFromCVWithAI = async (text) => {
+  // Try AI backend first
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1000,
-        messages: [{ role: "user", content: `You are a CV/resume parser. Extract candidate details from this resume text.
-
-RESUME TEXT:
-${text.substring(0, 4000)}
-
-Respond ONLY with a JSON object. No markdown, no backticks, no explanation. Just pure JSON:
-{
-  "name": "Full name of the candidate",
-  "email": "email@example.com or empty string if not found",
-  "phone": "phone number with country code or empty string",
-  "location": "city name or empty string",
-  "experience": "total years like 5 yrs or empty string",
-  "current_role": "current or most recent job title",
-  "skills": ["skill1", "skill2", "skill3"],
-  "current_company": "current or most recent company name",
-  "education": "highest degree and institution"
-}
-
-Rules:
-- For name: extract the person's full name, not company name or heading text
-- For phone: include +91 prefix for Indian numbers  
-- For location: extract current city of residence
-- For experience: calculate total professional experience in years
-- For skills: extract top 8 technical and professional skills
-- If any field is not found, use empty string "" or empty array []` }],
-      })
+    const token = localStorage.getItem('fx_token');
+    const res = await fetch(`${API_BASE}/api/ai/parse-cv`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text: text.substring(0, 5000) }),
     });
-    const data = await response.json();
-    const responseText = data.content?.[0]?.text || "{}";
-    const clean = responseText.replace(/```json|```/g, "").trim();
-    return JSON.parse(clean);
-  } catch (err) {
-    console.error("AI CV parse error:", err);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.name) return data;
+    }
+  } catch (e) { console.warn('AI backend unavailable, using local parser:', e.message); }
+
+  // Fallback: local regex parser
+  try {
+    const t = text.replace(/\s+/g, " ").trim();
+    const lines = text.split(/\n/).map(l => l.trim()).filter(l => l.length > 0);
+    const emails = t.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g) || [];
+    const email = emails[0] || "";
+    let phone = "";
+    const pm = t.match(/(?:\+91[\s\-.]?)?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d[\s\-.]?\d/) || t.match(/\d{5}[\s\-.]?\d{5}/);
+    if (pm) { phone = pm[0].replace(/[^\d+]/g, ""); if (phone.length === 10) phone = "+91" + phone; if (phone.length === 12 && phone.startsWith("91")) phone = "+" + phone; if (phone.length === 13) phone = phone.slice(0,3)+" "+phone.slice(3,8)+" "+phone.slice(8); }
+    const skip = /resume|curriculum|vitae|cv|profile|objective|summary|personal|details|contact|address|page|confidential/i;
+    let name = "";
+    for (let i = 0; i < Math.min(8, lines.length); i++) {
+      const l = lines[i]; if (l.includes("@") || /\d{5,}/.test(l) || skip.test(l) || l.length < 3 || l.length > 50) continue;
+      let c = l.replace(/[^a-zA-Z\s.]/g,"").trim().replace(/^(Mr|Mrs|Ms|Dr|Prof|Name|Candidate)\s*[.:]*\s*/i,"").trim();
+      const w = c.split(/\s+/).filter(x=>x.length>1);
+      if (w.length >= 2 && w.length <= 4 && w.every(x=>/^[A-Za-z]/.test(x))) { name = w.map(x=>x.charAt(0).toUpperCase()+x.slice(1).toLowerCase()).join(" "); break; }
+    }
+    if (!name && email) { const en = email.split("@")[0].replace(/[._\-\d]/g," ").trim(); if (en.length>3) name = en.split(/\s+/).map(x=>x.charAt(0).toUpperCase()+x.slice(1).toLowerCase()).join(" "); }
+    const cities = ["Mumbai","Delhi","Bangalore","Bengaluru","Hyderabad","Ahmedabad","Chennai","Kolkata","Pune","Jaipur","Lucknow","Nagpur","Indore","Bhopal","Gurugram","Gurgaon","Noida","Greater Noida","Chandigarh","Kochi","Dehradun","Bhubaneswar","Coimbatore","Mysore","Vadodara","Surat","Ranchi","Patna","Ghaziabad","Faridabad","Rajkot","Jodhpur","Nashik","Thane","Navi Mumbai","Vizag","Vijayawada","Madurai","Trivandrum","Mangalore","Agra","Meerut"];
+    let location = ""; for (const c of cities) { if (new RegExp("\\b"+c+"\\b","i").test(t)) { location = c; break; } }
+    const em = t.match(/(\d{1,2})\s*\+?\s*(?:years?|yrs?)\s*(?:of)?\s*(?:experience|exp|work)/i);
+    const experience = em ? em[1]+" yrs" : "";
+    const sdb = ["Java","Python","JavaScript","React","Node.js","Angular","TypeScript","AWS","Azure","Docker","Kubernetes","SQL","MongoDB","PostgreSQL","Spring Boot","Django",".NET","C++","C#","Swift","Kotlin","Figma","Tableau","Power BI","SAP","HVAC","Git","Jenkins","CI/CD","Agile","Scrum","Machine Learning","NLP","TensorFlow","PyTorch","Spark","Hadoop","REST API","Microservices","Linux","DevOps","Terraform","Selenium","HTML","CSS","PHP","Excel","Salesforce","Sales","Marketing","HR","Project Management","AutoCAD","SolidWorks"];
+    const skills = sdb.filter(s => new RegExp("\\b"+s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\b","i").test(t)).slice(0,10);
+    return { name, email, phone, location, experience, skills, current_role: "", current_company: "", education: "" };
+  } catch (e) { return { name:"", email:"", phone:"", location:"", experience:"", skills:[], current_role:"", current_company:"", education:"" }; }
+};
+
+// Call backend AI for JD matching
+const analyzeMatchWithAI = async (cvText, jobDescription, jobTitle) => {
+  try {
+    const token = localStorage.getItem('fx_token');
+    const res = await fetch(`${API_BASE}/api/ai/match-jd`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ cvText: cvText.substring(0, 4000), jobDescription, jobTitle }),
+    });
+    if (res.ok) return await res.json();
     return null;
-  }
+  } catch (e) { console.warn('AI match unavailable:', e.message); return null; }
 };
 
 // ── PDF Text Extraction (loads pdf.js from CDN) ────────────────────────
@@ -850,46 +864,6 @@ const readAsText = (file) => new Promise((resolve) => {
   reader.readAsText(file);
 });
 
-// ── AI Match Analysis (calls Claude API) ───────────────────────────────
-const analyzeMatchWithAI = async (cvText, jobDescription, jobTitle) => {
-  try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1000,
-        messages: [{ role: "user", content: `You are a recruitment expert. Analyze how well this candidate's CV matches the job description.
-
-JOB TITLE: ${jobTitle}
-
-JOB DESCRIPTION:
-${jobDescription || "Not provided"}
-
-CANDIDATE CV TEXT:
-${cvText.substring(0, 3000)}
-
-Respond ONLY with a JSON object (no markdown, no backticks):
-{
-  "match_percentage": <number 0-100>,
-  "summary": "<2-3 sentence summary of match>",
-  "matching_skills": ["skill1", "skill2"],
-  "missing_skills": ["skill1", "skill2"],
-  "experience_match": "<one line>",
-  "recommendation": "Strong Match" | "Good Match" | "Partial Match" | "Weak Match"
-}` }],
-      })
-    });
-    const data = await response.json();
-    const text = data.content?.[0]?.text || "{}";
-    const clean = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(clean);
-  } catch (err) {
-    console.error("AI match error:", err);
-    return null;
-  }
-};
-
 // ── Add Candidate Form (AI-powered) ────────────────────────────────────
 const AddCandidateForm = ({ user, onSave, onClose }) => {
   const [v, setV] = useState({});
@@ -947,7 +921,7 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
       // Use Claude AI to extract candidate details
       const parsed = await extractFromCVWithAI(text);
 
-      if (parsed && parsed.name) {
+      if (parsed) {
         setV(prev => ({
           ...prev,
           name: parsed.name || prev.name || "",
@@ -962,9 +936,8 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
         }));
         setParseStatus("done");
       } else {
-        setParseError("AI could not extract details. Text was extracted but may be garbled. You can fill details manually.");
+        setParseError("Could not process CV text. You can fill details manually.");
         setParseStatus("partial");
-        // Still move forward with what we have
         setCvText(text);
       }
     } catch (err) {
@@ -1091,7 +1064,7 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
       </div>}
 
       <div style={{ display:"flex", justifyContent:"flex-end", marginTop:16, gap:8 }}>
-        {parseStatus!=="done" && parseStatus!=="partial" && <Btn variant="secondary" onClick={()=>setStep(2)}>Skip — enter manually</Btn>}
+        {parseStatus!=="done" && parseStatus!=="partial" && <Btn variant="secondary" onClick={()=>setStep(2)}>Skip - enter manually</Btn>}
         {(parseStatus==="done" || parseStatus==="partial") && <Btn onClick={()=>setStep(2)}>Next — select role & review</Btn>}
       </div>
     </div>}
