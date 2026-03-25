@@ -519,58 +519,274 @@ const ClientsPage = ({ perms }) => {
   </div>;
 };
 
-// ── CANDIDATES ─────────────────────────────────────────────────────────
-const CandidatesPage = ({ perms }) => {
+// ── CANDIDATES (with CV Upload + Assessment + Status) ─────────────────
+const CAND_STATUSES = ["New","Screening","Account Manager Rejected","Submitted to Client","HR Review","Interview Stage","HR Discussion","Offer","Joined","Not Joined"];
+const STATUS_CLR = {"New":C.textMuted,"Screening":C.accent,"Account Manager Rejected":C.red,"Submitted to Client":"#6366F1","HR Review":C.purple,"Interview Stage":C.yellow,"HR Discussion":C.pink,"Offer":C.teal,"Joined":C.green,"Not Joined":C.red};
+
+const CandidatesPage = ({ perms, user }) => {
   const [search, setSearch] = useState(""); const [sel, setSel] = useState(null);
   const [statusF, setStatusF] = useState("All");
-  const f = CANDIDATES.filter(c => {
-    const m = c.name.toLowerCase().includes(search.toLowerCase()) || c.role.toLowerCase().includes(search.toLowerCase()) || c.skills.some(s=>s.toLowerCase().includes(search.toLowerCase()));
-    return m && (statusF==="All" || c.status===statusF);
+  const [showAdd, setShowAdd] = useState(false);
+  const [candidates, setCandidates] = useState(CANDIDATES);
+  const [statusMsg, setStatusMsg] = useState("");
+
+  const f = candidates.filter(c => {
+    const m = c.name.toLowerCase().includes(search.toLowerCase()) || c.role.toLowerCase().includes(search.toLowerCase()) || (c.skills||[]).some(s=>s.toLowerCase().includes(search.toLowerCase()));
+    return m && (statusF==="All" || c.pipelineStatus===statusF || c.status===statusF);
   });
+
+  const changeStatus = (candidate, newStatus) => {
+    setCandidates(prev => prev.map(c => c.id === candidate.id ? {...c, pipelineStatus: newStatus, status: newStatus} : c));
+    setSel(prev => prev ? {...prev, pipelineStatus: newStatus, status: newStatus} : prev);
+    setStatusMsg(`Status changed to "${newStatus}"`);
+    setTimeout(() => setStatusMsg(""), 3000);
+    // TODO: call API → updateCandidateStatus(candidate.id, newStatus)
+  };
+
+  const addCandidate = (newCand) => {
+    const id = `CN${String(candidates.length+1).padStart(4,"0")}`;
+    setCandidates(prev => [{...newCand, id, pipelineStatus:"New", status:"New", owner: user?.name, resumeScore: Math.round(((newCand.scoreSoft||0)+(newCand.scoreStability||0)+(newCand.scoreTech||0)+(newCand.scoreExp||0))/4*10)}, ...prev]);
+    setShowAdd(false);
+  };
+
   return <div>
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18, gap:10, flexWrap:"wrap" }}>
       <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
         <SearchBox value={search} onChange={setSearch} placeholder="Name, role, skills..." />
-        {["All","Active","In Pipeline","Placed"].map(s => <Pill key={s} text={s} active={statusF===s} onClick={()=>setStatusF(s)} />)}
+        {["All","New","Screening","Submitted to Client","Interview Stage","Offer","Joined"].map(s => <Pill key={s} text={s.length>15?s.replace("Submitted to ","→ "):s} active={statusF===s} onClick={()=>setStatusF(s)} />)}
       </div>
-      {perms?.canEditCandidates && <Btn icon={Icons.plus}>Add Candidate</Btn>}
+      {(perms?.canEditCandidates || user?.role==="Account Manager" || user?.role==="Super Admin") && <Btn icon={Icons.plus} onClick={()=>setShowAdd(true)}>Add Candidate + CV</Btn>}
     </div>
+    {statusMsg && <div style={{ padding:"10px 16px", borderRadius:8, background:C.green+"18", color:C.green, fontSize:13, fontWeight:600, marginBottom:14 }}>{Icons.check} {statusMsg}</div>}
     <Table columns={[
-      { label:"Name", render:r=><div><span style={{fontWeight:700,color:C.text}}>{r.name}</span>{r.linkedinUrl && <span style={{marginLeft:6,color:C.accent}}>{Icons.linkedin}</span>}{r.naukriId && <span style={{marginLeft:4,fontSize:9,color:"#5D5FEF",fontWeight:700}}>N</span>}</div> },
+      { label:"Name", render:r=><span style={{fontWeight:700,color:C.text}}>{r.name}</span> },
       { label:"Role", key:"role" },
       { label:"Exp", key:"experience" },
-      { label:"Score", render:r=><span style={{fontWeight:700,color:r.resumeScore>80?C.green:r.resumeScore>65?C.yellow:C.red}}>{r.resumeScore}</span> },
-      { label:"Skills", render:r=><div style={{display:"flex",gap:3}}>{r.skills.slice(0,2).map(s=><span key={s} style={{fontSize:9,padding:"2px 7px",borderRadius:10,background:C.border,color:C.textMuted}}>{s}</span>)}{r.skills.length>2&&<span style={{fontSize:9,color:C.textDim}}>+{r.skills.length-2}</span>}</div> },
-      { label:"CTC", key:"currentCTC" },
-      { label:"Expected", key:"expectedCTC" },
+      { label:"Score", render:r=><span style={{fontWeight:700,color:(r.resumeScore||0)>70?C.green:(r.resumeScore||0)>50?C.yellow:C.red}}>{r.resumeScore||"—"}</span> },
+      { label:"CTC (F+V)", render:r=>r.ctcFixed ? `${r.ctcFixed}+${r.ctcVar||0}` : (r.currentCTC||"—") },
+      { label:"Expected", render:r=>r.expFixed ? `${r.expFixed}+${r.expVar||0}` : (r.expectedCTC||"—") },
       { label:"Notice", key:"noticePeriod" },
-      { label:"Source", key:"source" },
-      { label:"WhatsApp", render:r=><Badge text={r.whatsapp} color={r.whatsapp==="Opted In"?C.whatsapp:C.textDim} /> },
-      { label:"Status", render:r=><Badge text={r.status} color={r.status==="Active"?C.green:r.status==="In Pipeline"?C.accent:r.status==="Placed"?C.purple:r.status==="Offered"?C.teal:C.textMuted} /> },
-    ]} data={f.slice(0,20)} onRow={setSel} />
-    <div style={{ marginTop:12, fontSize:11, color:C.textDim }}>Showing {Math.min(20,f.length)} of {f.length} candidates</div>
-    <Modal open={!!sel} onClose={()=>setSel(null)} title={sel?.name} width={580}>
+      { label:"Owner", render:r=><span style={{color:C.accent,fontSize:11}}>{r.owner||"—"}</span> },
+      { label:"Status", render:r=><Badge text={r.pipelineStatus||r.status||"New"} color={STATUS_CLR[r.pipelineStatus||r.status]||C.textMuted} /> },
+    ]} data={f.slice(0,30)} onRow={setSel} />
+
+    {/* ── Candidate Detail + Status Change Modal ── */}
+    <Modal open={!!sel} onClose={()=>setSel(null)} title={sel?.name} width={640}>
       {sel && <div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-          <Field label="ID" value={sel.id} /><Field label="Role" value={sel.role} />
-          <Field label="Experience" value={sel.experience} /><Field label="Location" value={sel.location} />
+          <Field label="Role" value={sel.role} /><Field label="Experience" value={sel.experience} />
           <Field label="Email" value={sel.email} /><Field label="Phone" value={sel.phone} />
-          <Field label="Current CTC" value={sel.currentCTC} /><Field label="Expected CTC" value={sel.expectedCTC} />
-          <Field label="Notice Period" value={sel.noticePeriod} /><Field label="Source" value={sel.source} />
-          <Field label="Resume Score" value={`${sel.resumeScore}/100`} /><Field label="WhatsApp" value={sel.whatsapp} />
-          <Field label="Naukri ID" value={sel.naukriId || "Not linked"} /><Field label="LinkedIn" value={sel.linkedinUrl || "Not linked"} />
+          <Field label="Location" value={sel.location} /><Field label="Notice Period" value={sel.noticePeriod} />
+          <Field label="Current CTC (Fixed)" value={sel.ctcFixed||sel.currentCTC||"—"} />
+          <Field label="Current CTC (Variable)" value={sel.ctcVar||"—"} />
+          <Field label="Expected CTC (Fixed)" value={sel.expFixed||sel.expectedCTC||"—"} />
+          <Field label="Expected CTC (Variable)" value={sel.expVar||"—"} />
+          <Field label="Holding Offer" value={sel.holdingOffer?"Yes — "+sel.holdingOfferDetails:"No"} />
+          <Field label="Last Working Day" value={sel.lwd||"—"} />
+          <Field label="Source" value={sel.source} /><Field label="Owner" value={sel.owner||"—"} />
+          <Field label="Referral By" value={sel.referralName||"None"} />
+          <Field label="Referral Phone" value={sel.referralPhone||"—"} />
         </div>
-        <div style={{ marginTop:12 }}>
-          <div style={{ fontSize:10, color:C.textDim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:6, fontWeight:600 }}>Skills</div>
-          <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>{sel.skills.map(s => <span key={s} style={{ fontSize:12, padding:"4px 12px", borderRadius:14, background:C.accentGlow, color:C.accentLight }}>{s}</span>)}</div>
+        {(sel.scoreSoft||sel.scoreTech) && <div style={{ marginTop:14, padding:14, borderRadius:10, background:C.surface, border:`1px solid ${C.border}` }}>
+          <div style={{ fontSize:10, color:C.textDim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:8, fontWeight:600 }}>Assessment scores (1-10)</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10, textAlign:"center" }}>
+            {[{l:"Soft Skills",v:sel.scoreSoft},{l:"Stability",v:sel.scoreStability},{l:"Technical",v:sel.scoreTech},{l:"Relevant Exp",v:sel.scoreExp}].map(s=>
+              <div key={s.l}><div style={{fontSize:22,fontWeight:800,color:(s.v||0)>=7?C.green:(s.v||0)>=5?C.yellow:C.red,fontFamily:F.display}}>{s.v||"—"}</div><div style={{fontSize:10,color:C.textDim}}>{s.l}</div></div>
+            )}
+          </div>
+          {sel.assessmentNotes && <div style={{marginTop:8,fontSize:12,color:C.textMuted,fontStyle:"italic"}}>{sel.assessmentNotes}</div>}
+        </div>}
+
+        {/* Status Change */}
+        <div style={{ marginTop:16, padding:14, borderRadius:10, background:C.surface, border:`1px solid ${C.border}` }}>
+          <div style={{ fontSize:10, color:C.textDim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:10, fontWeight:600 }}>Pipeline status</div>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
+            <Badge text={sel.pipelineStatus||sel.status||"New"} color={STATUS_CLR[sel.pipelineStatus||sel.status]||C.textMuted} />
+          </div>
+          {(user?.role==="Recruiter" || user?.role==="Super Admin") && (
+            <div>
+              <div style={{ fontSize:11, color:C.textMuted, marginBottom:6 }}>Change status:</div>
+              <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
+                {CAND_STATUSES.filter(s => {
+                  if (user?.role==="Recruiter") return s !== "Account Manager Rejected";
+                  return true;
+                }).map(s => (
+                  <button key={s} onClick={()=>changeStatus(sel, s)}
+                    style={{ padding:"6px 12px", borderRadius:8, border:`1px solid ${(sel.pipelineStatus||sel.status)===s?STATUS_CLR[s]:C.border}`, background:(sel.pipelineStatus||sel.status)===s?(STATUS_CLR[s]||C.accent)+"18":"transparent", color:(sel.pipelineStatus||sel.status)===s?STATUS_CLR[s]:C.textMuted, fontSize:11, fontWeight:600, cursor:"pointer", fontFamily:F.body }}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {user?.role==="Account Manager" && (
+            <div>
+              <div style={{ fontSize:11, color:C.textMuted, marginBottom:6 }}>Account Manager action:</div>
+              <Btn small variant="danger" onClick={()=>changeStatus(sel, "Account Manager Rejected")}>Reject Candidate</Btn>
+            </div>
+          )}
+          {statusMsg && <div style={{ marginTop:8, fontSize:12, color:C.green, fontWeight:600 }}>{statusMsg}</div>}
         </div>
-        <div style={{ display:"flex", gap:8, marginTop:18 }}>
+
+        <div style={{ display:"flex", gap:8, marginTop:14 }}>
           <Btn variant="whatsapp" icon={Icons.whatsapp} small>WhatsApp</Btn>
           <Btn variant="secondary" icon={Icons.mail} small>Email</Btn>
           <Btn variant="secondary" icon={Icons.phone} small>Call</Btn>
         </div>
       </div>}
     </Modal>
+
+    {/* ── Add Candidate + CV Upload + Assessment Form ── */}
+    <Modal open={showAdd} onClose={()=>setShowAdd(false)} title="Add Candidate with CV & Assessment" width={680}>
+      <AddCandidateForm user={user} onSave={addCandidate} onClose={()=>setShowAdd(false)} />
+    </Modal>
+  </div>;
+};
+
+// ── Add Candidate Form (CV + Assessment + CTC + Referral) ──────────────
+const AddCandidateForm = ({ user, onSave, onClose }) => {
+  const [v, setV] = useState({});
+  const [cvFile, setCvFile] = useState(null);
+  const [step, setStep] = useState(1); // 1=basic, 2=CTC+details, 3=assessment
+  const [saved, setSaved] = useState(false);
+  const set = (k, val) => setV(p => ({...p, [k]: val}));
+
+  const handleSave = () => {
+    const cand = {
+      name: v.name, email: v.email, phone: v.phone, role: v.role, experience: v.experience,
+      location: v.location, source: v.source || "Direct", skills: (v.skills||"").split(",").map(s=>s.trim()).filter(Boolean),
+      ctcFixed: v.ctcFixed, ctcVar: v.ctcVar, expFixed: v.expFixed, expVar: v.expVar,
+      noticePeriod: v.noticePeriod, lwd: v.lwd, holdingOffer: v.holdingOffer==="Yes",
+      holdingOfferDetails: v.holdingOfferDetails, referralName: v.referralName, referralPhone: v.referralPhone,
+      scoreSoft: parseInt(v.scoreSoft)||0, scoreStability: parseInt(v.scoreStability)||0,
+      scoreTech: parseInt(v.scoreTech)||0, scoreExp: parseInt(v.scoreExp)||0,
+      assessmentNotes: v.assessmentNotes, owner: user?.name, cvFile: cvFile?.name,
+    };
+    onSave(cand);
+    setSaved(true);
+    // TODO: call API → uploadCandidateWithCV(formData)
+  };
+
+  if (saved) return (
+    <div style={{ textAlign:"center", padding:30 }}>
+      <div style={{ width:48, height:48, borderRadius:24, background:C.green+"20", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16", color:C.green }}>{Icons.check}</div>
+      <div style={{ fontSize:16, fontWeight:700, color:C.text, fontFamily:F.display, marginBottom:6 }}>Candidate added!</div>
+      <div style={{ fontSize:13, color:C.textMuted }}>CV uploaded. Owner: {user?.name}. Status: New.</div>
+    </div>
+  );
+
+  const inputStyle = { width:"100%", padding:"10px 12px", borderRadius:8, border:`1px solid ${C.border}`, background:C.surface, color:C.text, fontSize:13, fontFamily:F.body, outline:"none", boxSizing:"border-box" };
+  const labelStyle = { display:"block", fontSize:11, color:C.textMuted, marginBottom:4, fontWeight:600 };
+
+  return <div>
+    {/* Step indicators */}
+    <div style={{ display:"flex", gap:4, marginBottom:20 }}>
+      {[{n:1,l:"Basic Info"},{n:2,l:"CTC & Details"},{n:3,l:"Assessment"}].map(s => (
+        <button key={s.n} onClick={()=>setStep(s.n)} style={{ flex:1, padding:"8px", borderRadius:8, border:`1px solid ${step===s.n?C.accent:C.border}`, background:step===s.n?C.accentGlow:"transparent", color:step===s.n?C.accent:C.textMuted, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:F.body }}>
+          {s.n}. {s.l}
+        </button>
+      ))}
+    </div>
+
+    {step===1 && <div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+        <div><label style={labelStyle}>Full Name *</label><input value={v.name||""} onChange={e=>set("name",e.target.value)} style={inputStyle} placeholder="Candidate name" /></div>
+        <div><label style={labelStyle}>Email</label><input value={v.email||""} onChange={e=>set("email",e.target.value)} style={inputStyle} placeholder="email@example.com" /></div>
+        <div><label style={labelStyle}>Phone *</label><input value={v.phone||""} onChange={e=>set("phone",e.target.value)} style={inputStyle} placeholder="+91 98765 43210" /></div>
+        <div><label style={labelStyle}>Role / Designation</label><input value={v.role||""} onChange={e=>set("role",e.target.value)} style={inputStyle} placeholder="Java Developer" /></div>
+        <div><label style={labelStyle}>Experience</label><input value={v.experience||""} onChange={e=>set("experience",e.target.value)} style={inputStyle} placeholder="5 yrs" /></div>
+        <div><label style={labelStyle}>Location</label><input value={v.location||""} onChange={e=>set("location",e.target.value)} style={inputStyle} placeholder="Bangalore" /></div>
+        <div><label style={labelStyle}>Skills (comma separated)</label><input value={v.skills||""} onChange={e=>set("skills",e.target.value)} style={inputStyle} placeholder="Java, Spring Boot, AWS" /></div>
+        <div><label style={labelStyle}>Source</label>
+          <select value={v.source||""} onChange={e=>set("source",e.target.value)} style={inputStyle}>
+            <option value="">Select</option>
+            {["LinkedIn","Naukri","Indeed","Referral","Direct","Job Fair","Monster"].map(s=><option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+      </div>
+      <div style={{ marginTop:16 }}>
+        <label style={labelStyle}>Upload CV (PDF / DOC / DOCX)</label>
+        <div style={{ border:`2px dashed ${C.border}`, borderRadius:10, padding:20, textAlign:"center", cursor:"pointer", background:cvFile?C.green+"08":C.surface }}
+          onClick={()=>document.getElementById("cv-input").click()}>
+          <input id="cv-input" type="file" accept=".pdf,.doc,.docx" style={{display:"none"}} onChange={e=>setCvFile(e.target.files[0])} />
+          {cvFile ? <div style={{color:C.green,fontWeight:600,fontSize:13}}>{Icons.check} {cvFile.name} ({(cvFile.size/1024/1024).toFixed(1)} MB)</div>
+          : <div style={{color:C.textMuted,fontSize:13}}>Click to select CV file or drag & drop</div>}
+        </div>
+      </div>
+      <div style={{ display:"flex", justifyContent:"flex-end", marginTop:16 }}>
+        <Btn onClick={()=>setStep(2)}>Next → CTC & Details</Btn>
+      </div>
+    </div>}
+
+    {step===2 && <div>
+      <div style={{ fontSize:13, fontWeight:600, color:C.text, marginBottom:12 }}>Compensation details</div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+        <div><label style={labelStyle}>Current CTC — Fixed (LPA)</label><input value={v.ctcFixed||""} onChange={e=>set("ctcFixed",e.target.value)} style={inputStyle} placeholder="12" /></div>
+        <div><label style={labelStyle}>Current CTC — Variable (LPA)</label><input value={v.ctcVar||""} onChange={e=>set("ctcVar",e.target.value)} style={inputStyle} placeholder="2" /></div>
+        <div><label style={labelStyle}>Expected CTC — Fixed (LPA)</label><input value={v.expFixed||""} onChange={e=>set("expFixed",e.target.value)} style={inputStyle} placeholder="18" /></div>
+        <div><label style={labelStyle}>Expected CTC — Variable (LPA)</label><input value={v.expVar||""} onChange={e=>set("expVar",e.target.value)} style={inputStyle} placeholder="3" /></div>
+        <div><label style={labelStyle}>Notice Period</label>
+          <select value={v.noticePeriod||""} onChange={e=>set("noticePeriod",e.target.value)} style={inputStyle}>
+            <option value="">Select</option>
+            {["Immediate","15 days","30 days","45 days","60 days","90 days"].map(s=><option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <div><label style={labelStyle}>Last Working Day</label><input type="date" value={v.lwd||""} onChange={e=>set("lwd",e.target.value)} style={inputStyle} /></div>
+        <div><label style={labelStyle}>Holding Any Offer?</label>
+          <select value={v.holdingOffer||""} onChange={e=>set("holdingOffer",e.target.value)} style={inputStyle}>
+            <option value="">Select</option><option value="Yes">Yes</option><option value="No">No</option>
+          </select>
+        </div>
+        {v.holdingOffer==="Yes" && <div><label style={labelStyle}>Offer Details</label><input value={v.holdingOfferDetails||""} onChange={e=>set("holdingOfferDetails",e.target.value)} style={inputStyle} placeholder="Company, CTC offered" /></div>}
+      </div>
+      <div style={{ fontSize:13, fontWeight:600, color:C.text, marginTop:16, marginBottom:12 }}>Referral details (if any)</div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+        <div><label style={labelStyle}>Referral Given By (name)</label><input value={v.referralName||""} onChange={e=>set("referralName",e.target.value)} style={inputStyle} placeholder="Referrer name" /></div>
+        <div><label style={labelStyle}>Referral Phone</label><input value={v.referralPhone||""} onChange={e=>set("referralPhone",e.target.value)} style={inputStyle} placeholder="+91 98765 43210" /></div>
+      </div>
+      <div style={{ fontSize:11, color:C.textDim, marginTop:6 }}>If referral candidate joins, referrer is eligible for referral bonus.</div>
+      <div style={{ display:"flex", justifyContent:"space-between", marginTop:16 }}>
+        <Btn variant="secondary" onClick={()=>setStep(1)}>← Back</Btn>
+        <Btn onClick={()=>setStep(3)}>Next → Assessment</Btn>
+      </div>
+    </div>}
+
+    {step===3 && <div>
+      <div style={{ fontSize:13, fontWeight:600, color:C.text, marginBottom:12 }}>Your assessment of this candidate (rate 1-10)</div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+        {[{k:"scoreSoft",l:"Soft Skills"},{k:"scoreStability",l:"Stability (tenure, loyalty)"},{k:"scoreTech",l:"Technical Knowledge"},{k:"scoreExp",l:"Relevant Experience"}].map(s => (
+          <div key={s.k}>
+            <label style={labelStyle}>{s.l}</label>
+            <div style={{ display:"flex", gap:4 }}>
+              {[1,2,3,4,5,6,7,8,9,10].map(n => (
+                <button key={n} onClick={()=>set(s.k, String(n))}
+                  style={{ width:28, height:28, borderRadius:6, border:`1px solid ${parseInt(v[s.k])===n?C.accent:C.border}`, background:parseInt(v[s.k])>=n?(n>=8?C.green:n>=5?C.yellow:C.red)+"25":"transparent", color:parseInt(v[s.k])===n?C.accent:C.textMuted, fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop:12 }}>
+        <label style={labelStyle}>Assessment Notes</label>
+        <textarea value={v.assessmentNotes||""} onChange={e=>set("assessmentNotes",e.target.value)} rows={3}
+          style={{ ...inputStyle, resize:"vertical" }} placeholder="Overall impression, strengths, concerns..." />
+      </div>
+      <div style={{ marginTop:12, padding:12, borderRadius:8, background:C.surface, border:`1px solid ${C.border}` }}>
+        <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>Overall Score</div>
+        <div style={{ fontSize:28, fontWeight:800, fontFamily:F.display, color:C.accent }}>
+          {[v.scoreSoft,v.scoreStability,v.scoreTech,v.scoreExp].filter(Boolean).length > 0
+            ? Math.round([v.scoreSoft,v.scoreStability,v.scoreTech,v.scoreExp].filter(Boolean).reduce((a,b)=>a+parseInt(b),0) / [v.scoreSoft,v.scoreStability,v.scoreTech,v.scoreExp].filter(Boolean).length * 10)
+            : "—"}
+          <span style={{ fontSize:14, color:C.textDim }}>/100</span>
+        </div>
+      </div>
+      <div style={{ display:"flex", justifyContent:"space-between", marginTop:16 }}>
+        <Btn variant="secondary" onClick={()=>setStep(2)}>← Back</Btn>
+        <Btn variant="success" icon={Icons.check} onClick={handleSave}>Save Candidate</Btn>
+      </div>
+    </div>}
   </div>;
 };
 
@@ -578,13 +794,24 @@ const CandidatesPage = ({ perms }) => {
 const JobsPage = ({ user, perms }) => {
   const [search, setSearch] = useState(""); const [sel, setSel] = useState(null);
   const [statusF, setStatusF] = useState("Open");
+  const [jobsData, setJobsData] = useState(JOBS);
+  const [assignSuccess, setAssignSuccess] = useState("");
   const [viewAll, setViewAll] = useState(user?.role === "Super Admin" || user?.role === "Account Manager");
   const isRecruiter = user?.role === "Recruiter";
-  const allJobs = isRecruiter && !viewAll ? JOBS.filter(j => j.recruiter === user?.name) : JOBS;
+  const canAssign = user?.role === "Super Admin" || user?.role === "Account Manager";
+  const allJobs = isRecruiter && !viewAll ? jobsData.filter(j => j.recruiter === user?.name) : jobsData;
   const f = allJobs.filter(j => {
     const m = j.title.toLowerCase().includes(search.toLowerCase()) || j.client.toLowerCase().includes(search.toLowerCase());
     return m && (statusF==="All" || j.status===statusF);
   });
+
+  const assignRecruiter = (jobId, recruiterName) => {
+    setJobsData(prev => prev.map(j => j.id === jobId ? { ...j, recruiter: recruiterName } : j));
+    setSel(prev => prev ? { ...prev, recruiter: recruiterName } : prev);
+    setAssignSuccess(`Assigned to ${recruiterName}`);
+    setTimeout(() => setAssignSuccess(""), 3000);
+  };
+
   return <div>
     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18, gap:10, flexWrap:"wrap" }}>
       <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
@@ -597,6 +824,7 @@ const JobsPage = ({ user, perms }) => {
         {perms?.canEditJobs && <Btn icon={Icons.plus}>Add Requirement</Btn>}
       </div>
     </div>
+    {assignSuccess && <div style={{ padding:"10px 16px", borderRadius:8, background:C.green+"18", color:C.green, fontSize:13, fontWeight:600, marginBottom:14, display:"flex", alignItems:"center", gap:8 }}>{Icons.check} {assignSuccess}</div>}
     <Table columns={[
       { label:"ID", render:r=><span style={{color:C.textDim,fontSize:11}}>{r.id}</span> },
       { label:"Title", render:r=><span style={{fontWeight:700,color:C.text}}>{r.title}</span> },
@@ -605,21 +833,50 @@ const JobsPage = ({ user, perms }) => {
       { label:"Positions", render:r=><span>{r.filled}<span style={{color:C.textDim}}>/{r.positions}</span></span> },
       { label:"Submitted", key:"submitted" },
       { label:"Shortlisted", key:"shortlisted" },
-      { label:"Recruiter", key:"recruiter" },
+      { label:"Recruiter", render:r=><span style={{color:r.recruiter?C.accent:C.red,fontWeight:600}}>{r.recruiter||"Unassigned"}</span> },
       { label:"Priority", render:r=><Badge text={r.priority} color={r.priority==="Critical"?C.red:r.priority==="High"?C.yellow:C.accent} /> },
       { label:"Deadline", key:"deadline" },
     ]} data={f} onRow={setSel} />
-    <Modal open={!!sel} onClose={()=>setSel(null)} title={sel?.title} width={560}>
-      {sel && <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-        <Field label="Job ID" value={sel.id} /><Field label="Client" value={sel.client} />
-        <Field label="Location" value={sel.location} /><Field label="Type" value={sel.type} />
-        <Field label="CTC Range" value={sel.ctcRange} /><Field label="Positions" value={`${sel.filled}/${sel.positions}`} />
-        <Field label="Submitted" value={sel.submitted} /><Field label="Shortlisted" value={sel.shortlisted} />
-        <Field label="Recruiter" value={sel.recruiter} /><Field label="Priority" value={sel.priority} />
-        <Field label="Posted" value={sel.postedDate} /><Field label="Deadline" value={sel.deadline} />
-        <div style={{ gridColumn:"1/-1" }}>
+    <Modal open={!!sel} onClose={()=>{setSel(null);setAssignSuccess("");}} title={sel?.title} width={580}>
+      {sel && <div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+          <Field label="Job ID" value={sel.id} /><Field label="Client" value={sel.client} />
+          <Field label="Location" value={sel.location} /><Field label="Type" value={sel.type} />
+          <Field label="CTC Range" value={sel.ctcRange} /><Field label="Positions" value={`${sel.filled}/${sel.positions}`} />
+          <Field label="Submitted" value={sel.submitted} /><Field label="Shortlisted" value={sel.shortlisted} />
+          <Field label="Priority" value={sel.priority} /><Field label="Deadline" value={sel.deadline} />
+          <Field label="Posted" value={sel.postedDate} /><Field label="Status" value={sel.status} />
+        </div>
+        <div style={{ gridColumn:"1/-1", marginTop:8 }}>
           <div style={{ fontSize:10, color:C.textDim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:5, fontWeight:600 }}>Required Skills</div>
           <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>{sel.skills.map(s => <span key={s} style={{ fontSize:12, padding:"4px 12px", borderRadius:14, background:C.accentGlow, color:C.accentLight }}>{s}</span>)}</div>
+        </div>
+        {sel.description && <div style={{ marginTop:12 }}><Field label="Notes" value={sel.description} /></div>}
+
+        {/* Assign Recruiter Section */}
+        <div style={{ marginTop:16, padding:16, borderRadius:12, background:C.surface, border:`1px solid ${C.border}` }}>
+          <div style={{ fontSize:10, color:C.textDim, textTransform:"uppercase", letterSpacing:"0.06em", marginBottom:10, fontWeight:600 }}>Assigned recruiter</div>
+          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:canAssign?12:0 }}>
+            <div style={{ width:36, height:36, borderRadius:18, background:C.accent+"20", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:800, color:C.accent }}>{sel.recruiter?sel.recruiter[0]:"?"}</div>
+            <div>
+              <div style={{ fontSize:14, fontWeight:700, color:C.text }}>{sel.recruiter || "Unassigned"}</div>
+              <div style={{ fontSize:11, color:C.textMuted }}>{TEAM.find(t=>t.name===sel.recruiter)?.role || ""}</div>
+            </div>
+          </div>
+          {canAssign && <>
+            <div style={{ fontSize:11, color:C.textMuted, marginBottom:8, fontWeight:600 }}>Reassign to:</div>
+            <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+              {TEAM.map(t => (
+                <button key={t.id} onClick={()=>assignRecruiter(sel.id, t.name)}
+                  style={{ padding:"8px 14px", borderRadius:8, border:`1px solid ${sel.recruiter===t.name?C.accent:C.border}`, background:sel.recruiter===t.name?C.accentGlow:"transparent", color:sel.recruiter===t.name?C.accent:C.text, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:F.body, display:"flex", alignItems:"center", gap:6, transition:"all .15s" }}>
+                  <span style={{ width:22, height:22, borderRadius:11, background:t.color+"20", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:800, color:t.color }}>{t.avatar}</span>
+                  {t.name}
+                  <span style={{ fontSize:10, color:C.textDim }}>({t.role})</span>
+                </button>
+              ))}
+            </div>
+            {assignSuccess && <div style={{ marginTop:10, padding:"8px 12px", borderRadius:8, background:C.green+"18", color:C.green, fontSize:12, fontWeight:600, display:"flex", alignItems:"center", gap:6 }}>{Icons.check} {assignSuccess}</div>}
+          </>}
         </div>
       </div>}
     </Modal>
@@ -1036,8 +1293,8 @@ const PERMISSIONS = {
     canAddUsers: true, canDeleteAnything: true,
   },
   "Account Manager": {
-    pages: ["dashboard","clients","jobs","pipeline","interviews","candidates","whatsapp","team","reports"],
-    canEditClients: true, canEditJobs: true, canEditCandidates: false, canEditPipeline: true,
+    pages: ["dashboard","cv","clients","jobs","pipeline","interviews","candidates","whatsapp","team","reports"],
+    canEditClients: true, canEditJobs: true, canEditCandidates: true, canEditPipeline: true,
     canScheduleInterviews: true, canSendWhatsApp: true, canViewTeam: true, canViewReports: true,
     canAddUsers: false, canDeleteAnything: false,
   },
@@ -1239,7 +1496,7 @@ export default function App() {
             {page==="dashboard" && <CommandCenter setPage={setPage} user={user} perms={perms} />}
             {page==="cv" && <CVHub />}
             {page==="clients" && <ClientsPage perms={perms} />}
-            {page==="candidates" && <CandidatesPage perms={perms} />}
+            {page==="candidates" && <CandidatesPage perms={perms} user={user} />}
             {page==="jobs" && <JobsPage user={user} perms={perms} />}
             {page==="pipeline" && <PipelinePage user={user} perms={perms} />}
             {page==="interviews" && <InterviewsPage user={user} perms={perms} />}
