@@ -736,45 +736,51 @@ const CandidatesPage = ({ perms, user }) => {
 
 // ── Add Candidate Form (CV + Assessment + CTC + Referral) ──────────────
 // ── CV Text Extraction Utilities ────────────────────────────────────────
-const INDIAN_CITIES = ["Mumbai","Delhi","Bangalore","Bengaluru","Hyderabad","Ahmedabad","Chennai","Kolkata","Pune","Jaipur","Lucknow","Kanpur","Nagpur","Indore","Thane","Bhopal","Visakhapatnam","Vizag","Patna","Vadodara","Ghaziabad","Ludhiana","Agra","Nashik","Faridabad","Meerut","Rajkot","Varanasi","Srinagar","Aurangabad","Dhanbad","Amritsar","Allahabad","Ranchi","Howrah","Coimbatore","Jabalpur","Gwalior","Vijayawada","Jodhpur","Madurai","Raipur","Kochi","Chandigarh","Mysore","Trivandrum","Thiruvananthapuram","Gurgaon","Gurugram","Noida","Greater Noida","Dehradun","Bhubaneswar","Mangalore","Navi Mumbai"];
 
-const extractFromCVText = (text) => {
-  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
-  // Email
-  const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-  const email = emailMatch ? emailMatch[0] : "";
-  // Phone — Indian patterns
-  const phoneMatch = text.match(/(?:\+91[\s-]?)?(?:\d[\s-]?){10,13}/) || text.match(/\d{5}[\s-]?\d{5}/);
-  let phone = phoneMatch ? phoneMatch[0].replace(/[^\d+]/g, "") : "";
-  if (phone.length === 10) phone = "+91 " + phone;
-  if (phone.length === 12 && phone.startsWith("91")) phone = "+" + phone;
-  // Name — first 1-2 lines, look for name pattern (2-4 capitalized words, no special chars)
-  let name = "";
-  for (let i = 0; i < Math.min(5, lines.length); i++) {
-    const line = lines[i].replace(/[^a-zA-Z\s.]/g, "").trim();
-    const words = line.split(/\s+/).filter(w => w.length > 1);
-    if (words.length >= 2 && words.length <= 5 && words.every(w => /^[A-Z]/.test(w)) && !line.includes("@") && !line.match(/resume|curriculum|vitae|phone|email|address/i)) {
-      name = words.join(" "); break;
-    }
-  }
-  if (!name && lines[0]) { const cleaned = lines[0].replace(/[^a-zA-Z\s]/g,"").trim(); if (cleaned.length > 3 && cleaned.length < 40) name = cleaned; }
-  // Location — match Indian cities
-  let location = "";
-  const textLower = text.toLowerCase();
-  for (const city of INDIAN_CITIES) {
-    if (textLower.includes(city.toLowerCase())) { location = city; break; }
-  }
-  // Skills — look for common tech skills
-  const SKILL_PATTERNS = ["Java","Python","JavaScript","React","Node.js","Angular","Vue","TypeScript","AWS","Azure","GCP","Docker","Kubernetes","SQL","MongoDB","PostgreSQL","MySQL","Spring Boot","Django","Flask","C++","C#",".NET","Ruby","Go","Rust","Swift","Kotlin","Figma","Tableau","Power BI","SAP","HVAC","Sales","Marketing","Excel","Git","Jenkins","CI/CD","Agile","Scrum","Machine Learning","ML","AI","NLP","Data Science","TensorFlow","PyTorch","Spark","Hadoop","Salesforce","ServiceNow","Selenium","REST API","Microservices","Linux","DevOps","Terraform","Ansible"];
-  const skills = SKILL_PATTERNS.filter(s => {
-    const regex = new RegExp("\\b" + s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + "\\b", "i");
-    return regex.test(text);
-  });
-  // Experience — look for patterns like "5 years", "5+ yrs"
-  const expMatch = text.match(/(\d{1,2})\+?\s*(?:years?|yrs?)\s*(?:of)?\s*(?:experience|exp)?/i);
-  const experience = expMatch ? `${expMatch[1]} yrs` : "";
+// AI-powered CV parsing — sends CV text to Claude for accurate extraction
+const extractFromCVWithAI = async (text) => {
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1000,
+        messages: [{ role: "user", content: `You are a CV/resume parser. Extract candidate details from this resume text.
 
-  return { name, email, phone, location, skills: skills.slice(0, 8), experience, rawText: text };
+RESUME TEXT:
+${text.substring(0, 4000)}
+
+Respond ONLY with a JSON object. No markdown, no backticks, no explanation. Just pure JSON:
+{
+  "name": "Full name of the candidate",
+  "email": "email@example.com or empty string if not found",
+  "phone": "phone number with country code or empty string",
+  "location": "city name or empty string",
+  "experience": "total years like 5 yrs or empty string",
+  "current_role": "current or most recent job title",
+  "skills": ["skill1", "skill2", "skill3"],
+  "current_company": "current or most recent company name",
+  "education": "highest degree and institution"
+}
+
+Rules:
+- For name: extract the person's full name, not company name or heading text
+- For phone: include +91 prefix for Indian numbers  
+- For location: extract current city of residence
+- For experience: calculate total professional experience in years
+- For skills: extract top 8 technical and professional skills
+- If any field is not found, use empty string "" or empty array []` }],
+      })
+    });
+    const data = await response.json();
+    const responseText = data.content?.[0]?.text || "{}";
+    const clean = responseText.replace(/```json|```/g, "").trim();
+    return JSON.parse(clean);
+  } catch (err) {
+    console.error("AI CV parse error:", err);
+    return null;
+  }
 };
 
 // ── PDF Text Extraction (loads pdf.js from CDN) ────────────────────────
@@ -871,7 +877,7 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
   const [aiLoading, setAiLoading] = useState(false);
   const set = (k, val) => setV(p => ({...p, [k]: val}));
 
-  // ── Handle CV upload and auto-parse ──
+  // ── Handle CV upload and AI-parse ──
   const handleCVUpload = async (file) => {
     if (!file) return;
     setCvFile(file);
@@ -893,20 +899,27 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
       if (text.length < 20) { setParseStatus("error"); setParsing(false); return; }
 
       setCvText(text);
-      const parsed = extractFromCVText(text);
 
-      // Auto-fill form fields
-      setV(prev => ({
-        ...prev,
-        name: parsed.name || prev.name || "",
-        email: parsed.email || prev.email || "",
-        phone: parsed.phone || prev.phone || "",
-        location: parsed.location || prev.location || "",
-        experience: parsed.experience || prev.experience || "",
-        skills: parsed.skills.join(", ") || prev.skills || "",
-      }));
+      // Use Claude AI to extract candidate details
+      const parsed = await extractFromCVWithAI(text);
 
-      setParseStatus("done");
+      if (parsed) {
+        setV(prev => ({
+          ...prev,
+          name: parsed.name || prev.name || "",
+          email: parsed.email || prev.email || "",
+          phone: parsed.phone || prev.phone || "",
+          location: parsed.location || prev.location || "",
+          experience: parsed.experience || prev.experience || "",
+          skills: (parsed.skills || []).join(", ") || prev.skills || "",
+          currentRole: parsed.current_role || "",
+          currentCompany: parsed.current_company || "",
+          education: parsed.education || "",
+        }));
+        setParseStatus("done");
+      } else {
+        setParseStatus("error");
+      }
     } catch (err) {
       console.error("CV parse error:", err);
       setParseStatus("error");
@@ -986,11 +999,11 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
 
         {parsing ? <div>
           <div style={{ width:40, height:40, borderRadius:20, border:`3px solid ${C.border}`, borderTopColor:C.accent, animation:"spin 1s linear infinite", margin:"0 auto 12" }} />
-          <div style={{color:C.accent,fontWeight:700,fontSize:14}}>Parsing CV with AI...</div>
-          <div style={{color:C.textMuted,fontSize:12,marginTop:4}}>Extracting name, email, phone, skills</div>
+          <div style={{color:C.accent,fontWeight:700,fontSize:14}}>Claude AI parsing CV...</div>
+          <div style={{color:C.textMuted,fontSize:12,marginTop:4}}>Extracting name, email, phone, location, skills, experience</div>
         </div>
         : parseStatus==="done" ? <div>
-          <div style={{color:C.green,fontWeight:700,fontSize:16,marginBottom:6}}>{Icons.check} CV parsed successfully!</div>
+          <div style={{color:C.green,fontWeight:700,fontSize:16,marginBottom:6}}>{Icons.check} CV parsed by AI!</div>
           <div style={{color:C.text,fontSize:13,fontWeight:600}}>{cvFile.name}</div>
           <div style={{color:C.textMuted,fontSize:12,marginTop:2}}>{(cvFile.size/1024/1024).toFixed(2)} MB • Click to replace</div>
         </div>
@@ -1008,16 +1021,19 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
 
       {/* Show extracted data preview */}
       {parseStatus==="done" && <div style={{ marginTop:16, padding:16, borderRadius:12, background:C.surface, border:`1px solid ${C.green}30` }}>
-        <div style={{ fontSize:12, fontWeight:700, color:C.green, marginBottom:10, display:"flex", alignItems:"center", gap:6 }}>{Icons.zap} Auto-extracted from CV</div>
+        <div style={{ fontSize:12, fontWeight:700, color:C.green, marginBottom:10, display:"flex", alignItems:"center", gap:6 }}>{Icons.zap} AI extracted from CV</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-          <div><span style={{fontSize:10,color:C.textDim}}>Name</span><div style={{fontSize:14,fontWeight:700,color:v.name?C.text:C.red}}>{v.name || "Not detected — fill manually"}</div></div>
+          <div><span style={{fontSize:10,color:C.textDim}}>Name</span><div style={{fontSize:14,fontWeight:700,color:v.name?C.text:C.red}}>{v.name || "Not detected"}</div></div>
           <div><span style={{fontSize:10,color:C.textDim}}>Email</span><div style={{fontSize:14,color:v.email?C.text:C.textDim}}>{v.email || "Not found"}</div></div>
           <div><span style={{fontSize:10,color:C.textDim}}>Phone</span><div style={{fontSize:14,color:v.phone?C.text:C.textDim}}>{v.phone || "Not found"}</div></div>
           <div><span style={{fontSize:10,color:C.textDim}}>Location</span><div style={{fontSize:14,color:v.location?C.text:C.textDim}}>{v.location || "Not found"}</div></div>
           <div><span style={{fontSize:10,color:C.textDim}}>Experience</span><div style={{fontSize:14,color:v.experience?C.text:C.textDim}}>{v.experience || "Not found"}</div></div>
-          <div><span style={{fontSize:10,color:C.textDim}}>Skills detected</span><div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:2}}>{(v.skills||"").split(",").filter(Boolean).slice(0,5).map(s=><span key={s} style={{fontSize:10,padding:"2px 8px",borderRadius:10,background:C.accentGlow,color:C.accentLight}}>{s.trim()}</span>)}</div></div>
+          <div><span style={{fontSize:10,color:C.textDim}}>Current Role</span><div style={{fontSize:14,color:v.currentRole?C.text:C.textDim}}>{v.currentRole || "Not found"}</div></div>
+          <div><span style={{fontSize:10,color:C.textDim}}>Current Company</span><div style={{fontSize:14,color:v.currentCompany?C.text:C.textDim}}>{v.currentCompany || "Not found"}</div></div>
+          <div><span style={{fontSize:10,color:C.textDim}}>Education</span><div style={{fontSize:14,color:v.education?C.text:C.textDim}}>{v.education || "Not found"}</div></div>
+          <div style={{gridColumn:"1/-1"}}><span style={{fontSize:10,color:C.textDim}}>Skills detected</span><div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:4}}>{(v.skills||"").split(",").filter(Boolean).map(s=><span key={s} style={{fontSize:10,padding:"3px 9px",borderRadius:10,background:C.accentGlow,color:C.accentLight,fontWeight:600}}>{s.trim()}</span>)}</div></div>
         </div>
-        <div style={{fontSize:11,color:C.textDim,marginTop:10}}>You can edit any field in the next step.</div>
+        <div style={{fontSize:11,color:C.textDim,marginTop:10}}>All fields are editable in the next step. AI extraction powered by Claude.</div>
       </div>}
 
       <div style={{ display:"flex", justifyContent:"flex-end", marginTop:16, gap:8 }}>
