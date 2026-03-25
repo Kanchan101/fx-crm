@@ -784,45 +784,71 @@ Rules:
 };
 
 // ── PDF Text Extraction (loads pdf.js from CDN) ────────────────────────
-const loadPdfJs = () => new Promise((resolve) => {
+// ── PDF Text Extraction (pdf.js from CDN with error handling) ──────────
+const loadPdfJs = () => new Promise((resolve, reject) => {
   if (window.pdfjsLib) { resolve(window.pdfjsLib); return; }
   const script = document.createElement("script");
-  script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+  script.src = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js";
   script.onload = () => {
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-    resolve(window.pdfjsLib);
+    try {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+      resolve(window.pdfjsLib);
+    } catch (e) { reject(e); }
   };
+  script.onerror = () => reject(new Error("Failed to load PDF library"));
   document.head.appendChild(script);
+  setTimeout(() => reject(new Error("PDF library load timeout")), 15000);
 });
 
 const extractPdfText = async (file) => {
-  const pdfjsLib = await loadPdfJs();
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  let text = "";
-  for (let i = 1; i <= Math.min(pdf.numPages, 5); i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    text += content.items.map(item => item.str).join(" ") + "\n";
+  try {
+    const pdfjsLib = await loadPdfJs();
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
+    const pdf = await loadingTask.promise;
+    let text = "";
+    for (let i = 1; i <= Math.min(pdf.numPages, 5); i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      text += content.items.map(item => item.str).join(" ") + "\n";
+    }
+    return text;
+  } catch (err) {
+    console.error("PDF extraction failed:", err);
+    return null;
   }
-  return text;
 };
 
-// ── DOCX Text Extraction (loads mammoth from CDN) ──────────────────────
-const loadMammoth = () => new Promise((resolve) => {
+// ── DOCX Text Extraction (mammoth from CDN with error handling) ────────
+const loadMammoth = () => new Promise((resolve, reject) => {
   if (window.mammoth) { resolve(window.mammoth); return; }
   const script = document.createElement("script");
-  script.src = "https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js";
+  script.src = "https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js";
   script.onload = () => resolve(window.mammoth);
+  script.onerror = () => reject(new Error("Failed to load DOCX library"));
   document.head.appendChild(script);
+  setTimeout(() => reject(new Error("DOCX library load timeout")), 15000);
 });
 
 const extractDocxText = async (file) => {
-  const mammoth = await loadMammoth();
-  const arrayBuffer = await file.arrayBuffer();
-  const result = await mammoth.extractRawText({ arrayBuffer });
-  return result.value;
+  try {
+    const mammoth = await loadMammoth();
+    const arrayBuffer = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer });
+    return result.value;
+  } catch (err) {
+    console.error("DOCX extraction failed:", err);
+    return null;
+  }
 };
+
+// ── Fallback: Read file as text (works for .txt and sometimes .doc) ───
+const readAsText = (file) => new Promise((resolve) => {
+  const reader = new FileReader();
+  reader.onload = (e) => resolve(e.target.result || "");
+  reader.onerror = () => resolve("");
+  reader.readAsText(file);
+});
 
 // ── AI Match Analysis (calls Claude API) ───────────────────────────────
 const analyzeMatchWithAI = async (cvText, jobDescription, jobTitle) => {
@@ -870,7 +896,8 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
   const [cvFile, setCvFile] = useState(null);
   const [cvText, setCvText] = useState("");
   const [parsing, setParsing] = useState(false);
-  const [parseStatus, setParseStatus] = useState(""); // "", "parsing", "done", "error"
+  const [parseStatus, setParseStatus] = useState(""); // "", "parsing", "done", "partial", "error"
+  const [parseError, setParseError] = useState("");
   const [step, setStep] = useState(1); // 1=upload CV, 2=details+role, 3=CTC, 4=assessment
   const [saved, setSaved] = useState(false);
   const [aiMatch, setAiMatch] = useState(null);
@@ -883,27 +910,44 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
     setCvFile(file);
     setParsing(true);
     setParseStatus("parsing");
+    setParseError("");
 
     try {
       let text = "";
       const ext = file.name.toLowerCase().split(".").pop();
 
+      // Try primary parser based on file type
       if (ext === "pdf") {
         text = await extractPdfText(file);
-      } else if (ext === "docx" || ext === "doc") {
+        if (!text) { setParseError("PDF parser failed — trying fallback..."); text = await readAsText(file); }
+      } else if (ext === "docx") {
         text = await extractDocxText(file);
+        if (!text) { setParseError("DOCX parser failed — trying fallback..."); text = await readAsText(file); }
+      } else if (ext === "doc") {
+        // .doc is legacy binary — try text fallback
+        text = await readAsText(file);
+        if (!text || text.includes("\x00")) {
+          setParseError("Legacy .doc format — please convert to .docx or .pdf and retry");
+          setParseStatus("error"); setParsing(false); return;
+        }
       } else if (ext === "txt") {
-        text = await file.text();
+        text = await readAsText(file);
       }
 
-      if (text.length < 20) { setParseStatus("error"); setParsing(false); return; }
+      // Clean extracted text
+      text = (text || "").replace(/\x00/g, "").replace(/\s+/g, " ").trim();
+
+      if (text.length < 30) {
+        setParseError(`Extracted only ${text.length} characters — file may be scanned/image-based. Try a text-based PDF.`);
+        setParseStatus("error"); setParsing(false); return;
+      }
 
       setCvText(text);
 
       // Use Claude AI to extract candidate details
       const parsed = await extractFromCVWithAI(text);
 
-      if (parsed) {
+      if (parsed && parsed.name) {
         setV(prev => ({
           ...prev,
           name: parsed.name || prev.name || "",
@@ -918,10 +962,14 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
         }));
         setParseStatus("done");
       } else {
-        setParseStatus("error");
+        setParseError("AI could not extract details. Text was extracted but may be garbled. You can fill details manually.");
+        setParseStatus("partial");
+        // Still move forward with what we have
+        setCvText(text);
       }
     } catch (err) {
       console.error("CV parse error:", err);
+      setParseError(`Error: ${err.message}. Try a different file format.`);
       setParseStatus("error");
     }
     setParsing(false);
@@ -979,7 +1027,7 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
     {/* Step indicators */}
     <div style={{ display:"flex", gap:4, marginBottom:20 }}>
       {[{n:1,l:"Upload CV"},{n:2,l:"Profile & Role"},{n:3,l:"CTC & Details"},{n:4,l:"Assessment"}].map(s => (
-        <button key={s.n} onClick={()=>s.n<=2||parseStatus==="done"?setStep(s.n):null} style={{ flex:1, padding:"8px", borderRadius:8, border:`1px solid ${step===s.n?C.accent:C.border}`, background:step===s.n?C.accentGlow:"transparent", color:step===s.n?C.accent:C.textMuted, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:F.body, opacity:s.n>2&&parseStatus!=="done"?0.4:1 }}>
+        <button key={s.n} onClick={()=>s.n<=2||(parseStatus==="done"||parseStatus==="partial")?setStep(s.n):null} style={{ flex:1, padding:"8px", borderRadius:8, border:`1px solid ${step===s.n?C.accent:C.border}`, background:step===s.n?C.accentGlow:"transparent", color:step===s.n?C.accent:C.textMuted, fontSize:12, fontWeight:600, cursor:"pointer", fontFamily:F.body, opacity:s.n>2&&parseStatus!=="done"&&parseStatus!=="partial"?0.4:1 }}>
           {s.n}. {s.l}
         </button>
       ))}
@@ -990,10 +1038,10 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
       <div style={{ fontSize:15, fontWeight:700, color:C.text, fontFamily:F.display, marginBottom:4 }}>Upload candidate CV</div>
       <div style={{ fontSize:12, color:C.textMuted, marginBottom:16 }}>Upload the CV first — our AI will automatically extract name, email, phone, location, and skills.</div>
 
-      <div style={{ border:`2px dashed ${parseStatus==="done"?C.green:parsing?C.accent:C.border}`, borderRadius:14, padding:32, textAlign:"center", cursor:"pointer", background:parseStatus==="done"?C.green+"06":parsing?C.accentGlow:C.surface, transition:"all .25s" }}
+      <div style={{ border:`2px dashed ${parseStatus==="done"?C.green:parseStatus==="partial"?C.yellow:parsing?C.accent:C.border}`, borderRadius:14, padding:32, textAlign:"center", cursor:"pointer", background:parseStatus==="done"?C.green+"06":parseStatus==="partial"?C.yellow+"06":parsing?C.accentGlow:C.surface, transition:"all .25s" }}
         onClick={()=>!parsing&&document.getElementById("cv-input-ai").click()}
         onDragOver={e=>{e.preventDefault();if(!parsing){e.currentTarget.style.borderColor=C.accent;e.currentTarget.style.background=C.accentGlow;}}}
-        onDragLeave={e=>{e.preventDefault();e.currentTarget.style.borderColor=parseStatus==="done"?C.green:C.border;e.currentTarget.style.background=parseStatus==="done"?C.green+"06":C.surface;}}
+        onDragLeave={e=>{e.preventDefault();e.currentTarget.style.borderColor=parseStatus==="done"?C.green:parseStatus==="partial"?C.yellow:C.border;e.currentTarget.style.background=parseStatus==="done"?C.green+"06":parseStatus==="partial"?C.yellow+"06":C.surface;}}
         onDrop={e=>{e.preventDefault();const file=e.dataTransfer.files[0];if(file&&!parsing)handleCVUpload(file);}}>
         <input id="cv-input-ai" type="file" accept=".pdf,.doc,.docx,.txt" style={{display:"none"}} onChange={e=>{if(e.target.files[0])handleCVUpload(e.target.files[0]);}} />
 
@@ -1009,7 +1057,13 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
         </div>
         : parseStatus==="error" ? <div>
           <div style={{color:C.red,fontWeight:700,fontSize:14,marginBottom:4}}>Could not parse this file</div>
-          <div style={{color:C.textMuted,fontSize:12}}>Try a different format (PDF works best)</div>
+          <div style={{color:C.textMuted,fontSize:12}}>{parseError || "Try a different format (PDF works best)"}</div>
+          <button onClick={()=>{setParseStatus("");setCvFile(null);setParseError("");}} style={{marginTop:8,padding:"6px 14px",borderRadius:6,border:`1px solid ${C.border}`,background:"transparent",color:C.accent,fontSize:12,cursor:"pointer",fontFamily:F.body}}>Try another file</button>
+        </div>
+        : parseStatus==="partial" ? <div>
+          <div style={{color:C.yellow,fontWeight:700,fontSize:14,marginBottom:4}}>Partial extraction</div>
+          <div style={{color:C.textMuted,fontSize:12}}>{parseError || "Some fields could not be detected. Fill them manually in Step 2."}</div>
+          <div style={{color:C.text,fontSize:13,fontWeight:600,marginTop:4}}>{cvFile.name}</div>
         </div>
         : <div>
           <div style={{color:C.textMuted,fontSize:36,marginBottom:10}}>{Icons.upload}</div>
@@ -1020,7 +1074,7 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
       </div>
 
       {/* Show extracted data preview */}
-      {parseStatus==="done" && <div style={{ marginTop:16, padding:16, borderRadius:12, background:C.surface, border:`1px solid ${C.green}30` }}>
+      {(parseStatus==="done" || parseStatus==="partial") && <div style={{ marginTop:16, padding:16, borderRadius:12, background:C.surface, border:`1px solid ${parseStatus==="done"?C.green:C.yellow}30` }}>
         <div style={{ fontSize:12, fontWeight:700, color:C.green, marginBottom:10, display:"flex", alignItems:"center", gap:6 }}>{Icons.zap} AI extracted from CV</div>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
           <div><span style={{fontSize:10,color:C.textDim}}>Name</span><div style={{fontSize:14,fontWeight:700,color:v.name?C.text:C.red}}>{v.name || "Not detected"}</div></div>
@@ -1037,8 +1091,8 @@ const AddCandidateForm = ({ user, onSave, onClose }) => {
       </div>}
 
       <div style={{ display:"flex", justifyContent:"flex-end", marginTop:16, gap:8 }}>
-        {parseStatus!=="done" && <Btn variant="secondary" onClick={()=>setStep(2)}>Skip — enter manually</Btn>}
-        {parseStatus==="done" && <Btn onClick={()=>setStep(2)}>Next — select role & review</Btn>}
+        {parseStatus!==="done" && parseStatus!=="partial" && <Btn variant="secondary" onClick={()=>setStep(2)}>Skip — enter manually</Btn>}
+        {(parseStatus==="done" || parseStatus==="partial") && <Btn onClick={()=>setStep(2)}>Next — select role & review</Btn>}
       </div>
     </div>}
 
