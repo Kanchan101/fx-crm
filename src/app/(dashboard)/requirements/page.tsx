@@ -9,7 +9,6 @@ import {
   X, Filter, Building2, AlertCircle, Share2,
 } from 'lucide-react';
 import clsx from 'clsx';
-import ShareJD from '@/components/ShareJD';
 
 interface Requirement {
   id: string;
@@ -69,8 +68,7 @@ export default function RequirementsPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingReq, setEditingReq] = useState<Requirement | null>(null);
   const [form, setForm] = useState(emptyForm);
-  const [shareJob, setShareJob] = useState<Requirement | null>(null);
-  const [saving, setSaving] = useState(false);
+    const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const fetchRequirements = useCallback(async () => {
@@ -293,10 +291,7 @@ export default function RequirementsPage() {
                     </button>
                   )}
 
-                  <button onClick={(e) => { e.stopPropagation(); setShareJob(req); }}
-                      className="w-8 h-8 rounded-lg hover:bg-blue-50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Share2 className="w-3.5 h-3.5 text-blue-500" />
-                    </button>
+                  <button onClick={(e) => { e.stopPropagation(); router.push(`/requirements/${req.id}?share=true`); }} className="w-8 h-8 rounded-lg hover:bg-blue-50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"><Share2 className="w-3.5 h-3.5 text-blue-500" /></button>
                     <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition-colors" />
                 </div>
               </div>
@@ -469,27 +464,6 @@ export default function RequirementsPage() {
             </div>
           </div>
         
-      {shareJob && (
-        <ShareJD
-          show={!!shareJob}
-          onClose={() => setShareJob(null)}
-          job={{
-            id: shareJob.id,
-            title: shareJob.title,
-            client_name: shareJob.client_name,
-            location: shareJob.location,
-            exp_min: shareJob.exp_min,
-            exp_max: shareJob.exp_max,
-            ctc_min: shareJob.ctc_min,
-            ctc_max: shareJob.ctc_max,
-            skills: shareJob.skills,
-            description: shareJob.description || '',
-            type: shareJob.type || 'Full Time',
-            positions_count: shareJob.positions_count || 1,
-            client_industry: shareJob.client_domain || '',
-          }}
-        />
-      )}
 </div>
       )}
     </div>
