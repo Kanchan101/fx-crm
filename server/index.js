@@ -17,6 +17,7 @@ const reportRoutes = require('./routes/reports');
 const outreachRoutes = require('./routes/outreach');
 const spocRoutes = require('./routes/spocs');
 const sendcvRoutes = require('./routes/sendcv');
+const publicRoutes = require('./routes/public');
 const { authenticate } = require('./middleware/auth');
 
 const app = express();
@@ -51,6 +52,7 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), uptime: process.uptime() });
 });
 
+app.use('/api/public', publicRoutes);
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/clients', authenticate, apiLimiter, clientRoutes);
 app.use('/api/clients', authenticate, apiLimiter, spocRoutes);

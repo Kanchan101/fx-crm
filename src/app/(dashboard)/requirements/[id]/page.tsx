@@ -5,10 +5,11 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { getToken } from '@/lib/api';
 import {
-  ArrowLeft, Building2, MapPin, Users, Copy, Mail, Phone, Send,
+  ArrowLeft, Building2, MapPin, Users, Copy, Mail, Phone, Send, Share2,
   Sparkles, Loader2, MessageSquare, Linkedin, Check, X, Plus, Trash2,
 } from 'lucide-react';
 import clsx from 'clsx';
+import ShareJD from '@/components/ShareJD';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -51,6 +52,7 @@ export default function RequirementDetailPage() {
   const [loading, setLoading] = useState(true);
   const [pipelineTab, setPipelineTab] = useState('active');
   const [activeMainTab, setActiveMainTab] = useState('pipeline');
+  const [showShare, setShowShare] = useState(false);
   const [copied, setCopied] = useState('');
 
   // SPOC state
@@ -268,6 +270,8 @@ export default function RequirementDetailPage() {
           </button>
           <button onClick={copyJD} className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 rounded-lg hover:bg-gray-50">
             {copied === 'jd' ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />} {copied === 'jd' ? 'Copied' : 'Copy JD'}
+          </button>
+          <button onClick={() => setShowShare(true)} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"><Share2 className="w-3 h-3" /> Share JD
           </button>
         </div>
       </div>
@@ -614,7 +618,30 @@ export default function RequirementDetailPage() {
               )}
             </div>
           </div>
-        </div>
+        
+      {/* Share JD Modal */}
+      {requirement && (
+        <ShareJD
+          show={showShare}
+          onClose={() => setShowShare(false)}
+          job={{
+            id: requirement.id || (params.id as string),
+            title: requirement.title,
+            client_name: requirement.client_name,
+            location: requirement.location,
+            exp_min: requirement.exp_min,
+            exp_max: requirement.exp_max,
+            ctc_min: requirement.ctc_min,
+            ctc_max: requirement.ctc_max,
+            skills: requirement.skills,
+            description: requirement.description,
+            type: requirement.type,
+            positions_count: requirement.positions_count,
+            client_industry: requirement.client_industry || '',
+          }}
+        />
+      )}
+</div>
       )}
     </div>
   );
