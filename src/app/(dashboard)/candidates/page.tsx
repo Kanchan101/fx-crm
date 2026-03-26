@@ -30,7 +30,7 @@ const emptyForm = {
   notice_period: '', last_working_day: '', holding_offer: false, holding_offer_details: '',
   referral_name: '', referral_phone: '', referral_bonus_eligible: false,
   assessment_soft_skills: '', assessment_stability: '', assessment_technical: '', assessment_experience: '',
-  job_id: '', cv_text: '',
+  job_id: '', cv_text: '', cv_storage_path: '',
 };
 
 export default function CandidatesPage() {
@@ -100,7 +100,7 @@ export default function CandidatesPage() {
         experience_years: p.experience_years ? String(p.experience_years) : f.experience_years,
         skills: p.skills || f.skills, current_role: p.current_role || f.current_role,
         current_company: p.current_company || f.current_company, education: p.education || f.education,
-        cv_text: data.raw_text || '',
+        cv_text: data.raw_text || '', cv_storage_path: data.cv_storage_path || '',
       }));
       setCvStep('form');
     } catch (err: any) { setError(err.message); setCvStep('upload'); }
@@ -132,7 +132,7 @@ export default function CandidatesPage() {
         expected_ctc_fixed: parseFloat(form.expected_ctc_fixed) || null, expected_ctc_variable: parseFloat(form.expected_ctc_variable) || null,
         assessment_soft_skills: parseInt(form.assessment_soft_skills) || null, assessment_stability: parseInt(form.assessment_stability) || null,
         assessment_technical: parseInt(form.assessment_technical) || null, assessment_experience: parseInt(form.assessment_experience) || null,
-        ai_match_percent: matchResult?.match_percent || null, ai_match_details: matchResult || null,
+        ai_match_percent: matchResult?.match_percent || null, ai_match_details: matchResult || null, cv_storage_path: form.cv_storage_path || null,
       };
       const res = await fetch(`${API}/api/candidates`, { method: 'POST', headers: headers(), body: JSON.stringify(payload) });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
