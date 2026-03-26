@@ -14,6 +14,8 @@ const pipelineRoutes = require('./routes/pipeline');
 const interviewRoutes = require('./routes/interviews');
 const reportRoutes = require('./routes/reports');
 const outreachRoutes = require('./routes/outreach');
+const spocRoutes = require('./routes/spocs');
+const sendcvRoutes = require('./routes/sendcv');
 const { authenticate } = require('./middleware/auth');
 
 const app = express();
@@ -49,6 +51,7 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/clients', authenticate, clientRoutes);
+app.use('/api/clients', authenticate, spocRoutes);
 app.use('/api/team', authenticate, teamRoutes);
 app.use('/api/requirements', authenticate, requirementRoutes);
 app.use('/api/candidates', authenticate, candidateRoutes);
@@ -56,6 +59,7 @@ app.use('/api/pipeline', authenticate, pipelineRoutes);
 app.use('/api/interviews', authenticate, interviewRoutes);
 app.use('/api/reports', authenticate, reportRoutes);
 app.use('/api/outreach', authenticate, outreachRoutes);
+app.use('/api/send-cv', authenticate, sendcvRoutes);
 
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);

@@ -1,3 +1,386 @@
+#!/bin/bash
+# FX CRM — Multi-SPOC + Send CVs to Client
+# Run from: cd /Users/kanchankuwarbi/Downloads/fx-crm && bash setup-sendcv.sh
+
+set -e
+echo "🚀 FX CRM — Multi-SPOC + Send CVs to Client"
+echo ""
+
+# ========================
+# BACKEND: DB migration — client_spocs table
+# ========================
+cat > server/migrate-spocs.js << 'EOF'
+require('dotenv').config();
+const { pool, query } = require('./db');
+
+async function migrate() {
+  console.log('Creating client_spocs table...');
+  await query(`
+    CREATE TABLE IF NOT EXISTS client_spocs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
+      name VARCHAR(150) NOT NULL,
+      email VARCHAR(200),
+      phone VARCHAR(15),
+      designation VARCHAR(150),
+      is_primary BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Migrate existing SPOC data from clients table
+  const clients = await query('SELECT id, spoc_name, spoc_email, spoc_phone, spoc_role FROM clients WHERE spoc_name IS NOT NULL AND spoc_name != \'\'');
+  for (const c of clients.rows) {
+    const exists = await query('SELECT id FROM client_spocs WHERE client_id = $1 AND name = $2', [c.id, c.spoc_name]);
+    if (exists.rows.length === 0) {
+      await query(
+        'INSERT INTO client_spocs (client_id, name, email, phone, designation, is_primary) VALUES ($1,$2,$3,$4,$5,true)',
+        [c.id, c.spoc_name, c.spoc_email, c.spoc_phone, c.spoc_role]
+      );
+      console.log('  Migrated SPOC:', c.spoc_name);
+    }
+  }
+
+  console.log('Done!');
+  await pool.end();
+}
+migrate().catch(e => { console.error(e); process.exit(1); });
+EOF
+echo "✅ server/migrate-spocs.js"
+
+# ========================
+# BACKEND: SPOC routes
+# ========================
+cat > server/routes/spocs.js << 'EOF'
+const express = require('express');
+const { query } = require('../db');
+const { authenticate, authorize } = require('../middleware/auth');
+
+const router = express.Router();
+
+// GET /api/clients/:clientId/spocs
+router.get('/:clientId/spocs', authenticate, async (req, res) => {
+  try {
+    const result = await query(
+      'SELECT * FROM client_spocs WHERE client_id = $1 ORDER BY is_primary DESC, name',
+      [req.params.clientId]
+    );
+    res.json({ spocs: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// POST /api/clients/:clientId/spocs
+router.post('/:clientId/spocs', authenticate, authorize('Super Admin', 'Account Manager'), async (req, res) => {
+  try {
+    const { name, email, phone, designation, is_primary } = req.body;
+    if (!name) return res.status(400).json({ error: 'Name required' });
+
+    if (is_primary) {
+      await query('UPDATE client_spocs SET is_primary = false WHERE client_id = $1', [req.params.clientId]);
+    }
+
+    const result = await query(
+      'INSERT INTO client_spocs (client_id, name, email, phone, designation, is_primary) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
+      [req.params.clientId, name, email, phone, designation, is_primary || false]
+    );
+    res.status(201).json({ spoc: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// PUT /api/clients/:clientId/spocs/:spocId
+router.put('/:clientId/spocs/:spocId', authenticate, authorize('Super Admin', 'Account Manager'), async (req, res) => {
+  try {
+    const { name, email, phone, designation, is_primary } = req.body;
+    if (is_primary) {
+      await query('UPDATE client_spocs SET is_primary = false WHERE client_id = $1', [req.params.clientId]);
+    }
+    const result = await query(
+      'UPDATE client_spocs SET name=$1, email=$2, phone=$3, designation=$4, is_primary=$5 WHERE id=$6 AND client_id=$7 RETURNING *',
+      [name, email, phone, designation, is_primary || false, req.params.spocId, req.params.clientId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ spoc: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// DELETE /api/clients/:clientId/spocs/:spocId
+router.delete('/:clientId/spocs/:spocId', authenticate, authorize('Super Admin', 'Account Manager'), async (req, res) => {
+  try {
+    await query('DELETE FROM client_spocs WHERE id = $1 AND client_id = $2', [req.params.spocId, req.params.clientId]);
+    res.json({ message: 'Deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+module.exports = router;
+EOF
+echo "✅ server/routes/spocs.js"
+
+# ========================
+# BACKEND: Send CVs to Client endpoint
+# ========================
+cat > server/routes/sendcv.js << 'EOF'
+const express = require('express');
+const { query } = require('../db');
+const { authenticate, authorize } = require('../middleware/auth');
+const { Resend } = require('resend');
+
+const router = express.Router();
+
+// POST /api/send-cv — Send candidate tracker + CVs to client SPOC
+router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), async (req, res) => {
+  try {
+    const { job_id, spoc_emails, cc_emails, candidate_ids, custom_message } = req.body;
+    if (!job_id || !spoc_emails || spoc_emails.length === 0) {
+      return res.status(400).json({ error: 'Job ID and at least one SPOC email required' });
+    }
+
+    const RESEND_API_KEY = process.env.RESEND_API_KEY;
+    if (!RESEND_API_KEY) return res.status(500).json({ error: 'Email not configured' });
+
+    // Get job + client info
+    const jobResult = await query(
+      'SELECT j.*, c.name as client_name FROM jobs j JOIN clients c ON c.id = j.client_id WHERE j.id = $1',
+      [job_id]
+    );
+    if (jobResult.rows.length === 0) return res.status(404).json({ error: 'Job not found' });
+    const job = jobResult.rows[0];
+
+    // Get candidates — either specific IDs or all "Submitted to Client"
+    let candidateSql;
+    let candidateParams;
+    if (candidate_ids && candidate_ids.length > 0) {
+      candidateSql = `
+        SELECT ca.*, p.status, p.ai_match_percent,
+          ca.current_ctc_fixed, ca.current_ctc_variable,
+          ca.expected_ctc_fixed, ca.notice_period, ca.holding_offer, ca.holding_offer_details
+        FROM candidates ca
+        JOIN pipeline p ON p.candidate_id = ca.id AND p.job_id = $1
+        WHERE ca.id = ANY($2)
+        ORDER BY ca.name`;
+      candidateParams = [job_id, candidate_ids];
+    } else {
+      candidateSql = `
+        SELECT ca.*, p.status, p.ai_match_percent,
+          ca.current_ctc_fixed, ca.current_ctc_variable,
+          ca.expected_ctc_fixed, ca.notice_period, ca.holding_offer, ca.holding_offer_details
+        FROM candidates ca
+        JOIN pipeline p ON p.candidate_id = ca.id AND p.job_id = $1
+        WHERE p.status = 'Submitted to Client'
+        ORDER BY ca.name`;
+      candidateParams = [job_id];
+    }
+    const candidates = await query(candidateSql, candidateParams);
+
+    if (candidates.rows.length === 0) {
+      return res.status(400).json({ error: 'No candidates found to send' });
+    }
+
+    // Build tracker HTML table
+    const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' });
+    let tableRows = '';
+    candidates.rows.forEach((c, i) => {
+      const ctcParts = [];
+      if (c.current_ctc_fixed) ctcParts.push(c.current_ctc_fixed + ' LPA Fixed');
+      if (c.current_ctc_variable) ctcParts.push(c.current_ctc_variable + ' LPA Var');
+      const ctcStr = ctcParts.length > 0 ? ctcParts.join(' + ') : '-';
+      const ectc = c.expected_ctc_fixed ? c.expected_ctc_fixed + ' LPA' : '-';
+      const remark = c.holding_offer ? (c.holding_offer_details || 'Holding Offer') : 'No Offer';
+
+      tableRows += `
+        <tr style="border-bottom: 1px solid #e5e7eb;">
+          <td style="padding: 8px 10px; font-size: 12px; color: #374151;">${today}</td>
+          <td style="padding: 8px 10px; font-size: 12px; color: #374151;">${job.title}</td>
+          <td style="padding: 8px 10px; font-size: 12px; color: #374151; font-weight: 600;">${c.name}</td>
+          <td style="padding: 8px 10px; font-size: 12px; color: #374151;">${c.phone || '-'}</td>
+          <td style="padding: 8px 10px; font-size: 12px;"><a href="mailto:${c.email}" style="color: #4c6ef5;">${c.email || '-'}</a></td>
+          <td style="padding: 8px 10px; font-size: 12px; color: #374151;">${c.current_company || '-'}</td>
+          <td style="padding: 8px 10px; font-size: 12px; color: #374151;">${c.experience_years ? c.experience_years + ' Years' : '-'}</td>
+          <td style="padding: 8px 10px; font-size: 12px; color: #374151;">${ctcStr}</td>
+          <td style="padding: 8px 10px; font-size: 12px; color: #374151;">${ectc}</td>
+          <td style="padding: 8px 10px; font-size: 12px; color: #374151;">${c.notice_period || '-'}</td>
+          <td style="padding: 8px 10px; font-size: 12px; color: #374151;">${c.location || '-'}</td>
+          <td style="padding: 8px 10px; font-size: 12px; color: #374151;">${remark}</td>
+        </tr>`;
+    });
+
+    const headerStyle = 'padding: 10px; font-size: 11px; font-weight: 700; color: white; background: #d97706; text-transform: uppercase; white-space: nowrap;';
+
+    const spocFirstName = spoc_emails[0].split('@')[0].split('.')[0];
+    const greeting = spocFirstName.charAt(0).toUpperCase() + spocFirstName.slice(1);
+
+    const emailHtml = `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 1200px; margin: 0 auto;">
+        <p style="font-size: 14px; color: #374151;">Hi ${greeting},</p>
+        <p style="font-size: 14px; color: #374151;">${custom_message || `Please find attached CVs for <strong>${job.title}</strong> position.`}</p>
+        <p style="font-size: 14px; color: #374151; margin-bottom: 16px;">Below details are for your reference :-</p>
+
+        <table style="width: 100%; border-collapse: collapse; border: 1px solid #e5e7eb; margin-bottom: 24px;">
+          <thead>
+            <tr>
+              <th style="${headerStyle}">Date</th>
+              <th style="${headerStyle}">Role</th>
+              <th style="${headerStyle}">Name</th>
+              <th style="${headerStyle}">Contact No</th>
+              <th style="${headerStyle}">Mail ID</th>
+              <th style="${headerStyle}">Current Org</th>
+              <th style="${headerStyle}">Total Exp</th>
+              <th style="${headerStyle}">Last CTC</th>
+              <th style="${headerStyle}">ECTC</th>
+              <th style="${headerStyle}">Notice Period</th>
+              <th style="${headerStyle}">Location</th>
+              <th style="${headerStyle}">Remark</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows}
+          </tbody>
+        </table>
+
+        <p style="font-size: 14px; color: #374151;">Please share your feedback.</p>
+        <p style="font-size: 14px; color: #374151; margin-top: 16px;">
+          <strong>Regards</strong><br/>
+          ${req.user.name}
+        </p>
+      </div>
+    `;
+
+    const resend = new Resend(RESEND_API_KEY);
+    const fromEmail = req.user.email || 'notifications@fxconsulting.in';
+
+    const emailPayload = {
+      from: `${req.user.name} <${fromEmail}>`,
+      to: spoc_emails,
+      subject: `CVs for Review || ${job.title}`,
+      html: emailHtml,
+    };
+
+    if (cc_emails && cc_emails.length > 0) {
+      emailPayload.cc = cc_emails;
+    }
+
+    const result = await resend.emails.send(emailPayload);
+
+    if (result.error) {
+      return res.status(400).json({ error: result.error.message });
+    }
+
+    // Log
+    await query(
+      'INSERT INTO activity_log (user_id, action, entity_type, entity_id, details) VALUES ($1,$2,$3,$4,$5)',
+      [req.user.id, 'SEND_CV', 'requirement', job_id, JSON.stringify({
+        to: spoc_emails, cc: cc_emails, candidates: candidates.rows.map(c => c.name), job_title: job.title
+      })]
+    );
+
+    res.json({ success: true, sent_to: spoc_emails, candidates_count: candidates.rows.length });
+  } catch (err) {
+    console.error('Send CV error:', err);
+    res.status(500).json({ error: err.message || 'Failed to send' });
+  }
+});
+
+module.exports = router;
+EOF
+echo "✅ server/routes/sendcv.js"
+
+# ========================
+# BACKEND: Update index.js with new routes
+# ========================
+cat > server/index.js << 'EOF'
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
+
+const authRoutes = require('./routes/auth');
+const clientRoutes = require('./routes/clients');
+const teamRoutes = require('./routes/team');
+const requirementRoutes = require('./routes/requirements');
+const candidateRoutes = require('./routes/candidates');
+const pipelineRoutes = require('./routes/pipeline');
+const interviewRoutes = require('./routes/interviews');
+const reportRoutes = require('./routes/reports');
+const outreachRoutes = require('./routes/outreach');
+const spocRoutes = require('./routes/spocs');
+const sendcvRoutes = require('./routes/sendcv');
+const { authenticate } = require('./middleware/auth');
+
+const app = express();
+const PORT = process.env.PORT || 4000;
+
+app.use(helmet());
+app.use(morgan('combined'));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://crm.fxconsulting.in',
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) callback(null, true);
+    else callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+}));
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 20,
+  message: { error: 'Too many login attempts, try again later' },
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/clients', authenticate, clientRoutes);
+app.use('/api/clients', authenticate, spocRoutes);
+app.use('/api/team', authenticate, teamRoutes);
+app.use('/api/requirements', authenticate, requirementRoutes);
+app.use('/api/candidates', authenticate, candidateRoutes);
+app.use('/api/pipeline', authenticate, pipelineRoutes);
+app.use('/api/interviews', authenticate, interviewRoutes);
+app.use('/api/reports', authenticate, reportRoutes);
+app.use('/api/outreach', authenticate, outreachRoutes);
+app.use('/api/send-cv', authenticate, sendcvRoutes);
+
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+app.listen(PORT, () => { console.log(`FX CRM API running on port ${PORT}`); });
+EOF
+echo "✅ server/index.js (spocs + sendcv routes)"
+
+# ========================
+# FRONTEND: Add SPOC management to Clients page
+# ========================
+# We'll add a SPOC section in the expanded client details
+node -e "
+const fs = require('fs');
+// No change needed to clients page for now — SPOCs managed from requirement detail
+console.log('Clients page: SPOCs accessible via requirement detail');
+"
+
+# ========================
+# FRONTEND: Requirement detail — Send CVs to Client button + SPOC picker
+# ========================
+cat > "src/app/(dashboard)/requirements/[id]/page.tsx" << 'ENDOFFILE'
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
@@ -619,3 +1002,23 @@ export default function RequirementDetailPage() {
     </div>
   );
 }
+ENDOFFILE
+echo "✅ src/app/(dashboard)/requirements/[id]/page.tsx (Send CVs + SPOCs + AI Outreach)"
+
+echo ""
+echo "=========================================="
+echo "🎉 Send CVs to Client + Multi-SPOC complete!"
+echo "=========================================="
+echo ""
+echo "Run these commands:"
+echo "  cd server && node migrate-spocs.js"
+echo "  kill \$(lsof -t -i:4000) 2>/dev/null; node index.js"
+echo ""
+echo "Then test:"
+echo "  1. Open a requirement → 'Client SPOCs' tab → Add SPOCs with emails"
+echo "  2. Add candidates, change status to 'Submitted to Client'"
+echo "  3. Click 'Send CVs' button → select SPOCs → send"
+echo "  4. Client receives email with tracker table (same format as screenshot)"
+echo ""
+echo "Deploy: npm run build && git add . && git commit -m 'Send CVs + Multi-SPOC' && git push"
+echo ""
