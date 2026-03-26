@@ -3,18 +3,28 @@ const { Pool } = require('pg');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  max: 30,                        // Up from 20 — handles 50 concurrent users
+  idleTimeoutMillis: 60000,       // Keep connections alive longer
+  connectionTimeoutMillis: 10000, // More time for initial connect
+  statement_timeout: 30000,       // Kill queries over 30s
+  query_timeout: 30000,
 });
 
-pool.on('error', (err) => { console.error('Unexpected DB pool error:', err); });
+pool.on('error', (err) => {
+  console.error('DB pool error:', err.message);
+});
+
+pool.on('connect', () => {
+  // Set statement timeout per connection
+});
 
 const query = async (text, params) => {
   const start = Date.now();
   const res = await pool.query(text, params);
   const duration = Date.now() - start;
-  if (duration > 1000) console.warn(`Slow query (${duration}ms):`, text.substring(0, 80));
+  if (duration > 2000) {
+    console.warn(`[SLOW ${duration}ms]`, text.substring(0, 100));
+  }
   return res;
 };
 

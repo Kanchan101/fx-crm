@@ -3,6 +3,7 @@ const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { Resend } = require('resend');
 
+const { generateOutreach } = require('../lib/ai');
 const router = express.Router();
 
 // POST /api/outreach/generate — AI generates email, WhatsApp, LinkedIn messages
@@ -50,7 +51,7 @@ Job Details:
 - Company: ${job.client_name} (${job.client_industry || ''})
 - Location: ${job.location || 'Not specified'}
 - Experience Required: ${job.exp_min}-${job.exp_max} years
-- CTC Range: ${job.ctc_min || 'Not specified'} - ${job.ctc_max || 'Not specified'} LPA
+- 
 - Skills: ${job.skills || 'Not specified'}
 - Job Description: ${(job.description || 'Not provided').substring(0, 3000)}
 
@@ -63,7 +64,7 @@ Rules:
 - WhatsApp: Friendly professional, use emojis sparingly (1-2 max), include role title + company + location + experience + key skills, max 800 chars
 - LinkedIn: Hook them in first line, mention role briefly, ask to connect, max 300 chars
 - Do NOT use phrases like "I came across your profile" — be direct about the opportunity
-- Include specific details from JD to make it personalized`
+- Include specific details from JD to make it personalized. NEVER include CTC/salary/compensation in any message — this is strictly confidential between recruiter and candidate`
         }]
       })
     });

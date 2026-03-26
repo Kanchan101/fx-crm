@@ -5,6 +5,7 @@ const fs = require('fs');
 const { query, transaction } = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
 const { uploadCV } = require('../lib/storage');
+const { parseCV: aiParseCV, matchCVtoJD } = require('../lib/ai');
 
 const router = express.Router();
 
