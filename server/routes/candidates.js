@@ -217,64 +217,35 @@ router.get('/:id', authenticate, async (req, res) => {
 // POST /api/candidates
 router.post('/', authenticate, async (req, res) => {
   try {
-    const {
-      name, email, phone, location, experience_years, skills,
-      current_role, current_company, education,
-      current_ctc_fixed, current_ctc_variable, expected_ctc_fixed, expected_ctc_variable,
-      notice_period, last_working_day, holding_offer, holding_offer_details,
-      referral_name, referral_phone, referral_bonus_eligible,
-      assessment_soft_skills, assessment_stability, assessment_technical, assessment_experience,
-      cv_text, cv_storage_path, job_id, ai_match_percent, ai_match_details
-    } = req.body;
-
-    if (!name) return res.status(400).json({ error: 'Name required' });
-
+    const b = req.body;
+    if (!b.name) return res.status(400).json({ error: 'Name required' });
+    let safeCvText = null;
+    if (b.cv_text && typeof b.cv_text === 'string') {
+      safeCvText = '';
+      for (let i = 0; i < b.cv_text.length; i++) {
+        const code = b.cv_text.charCodeAt(i);
+        if (code > 31 || code === 10 || code === 13 || code === 9) safeCvText += b.cv_text[i];
+      }
+    }
+    console.log('[Candidate] Saving:', b.name, 'cv_storage_path:', b.cv_storage_path || 'NONE');
     const result = await transaction(async (client) => {
       const cr = await client.query(
-        `INSERT INTO candidates (name, email, phone, location, experience_years, skills,
-          "current_role", current_company, education,
-          current_ctc_fixed, current_ctc_variable, expected_ctc_fixed, expected_ctc_variable,
-          notice_period, last_working_day, holding_offer, holding_offer_details,
-          referral_name, referral_phone, referral_bonus_eligible,
-          assessment_soft_skills, assessment_stability, assessment_technical, assessment_experience,
-          cv_text, cv_url, owner_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27) RETURNING *`,
-        [name, email, phone, location, experience_years || null, skills,
-         current_role, current_company, education,
-         current_ctc_fixed || null, current_ctc_variable || null,
-         expected_ctc_fixed || null, expected_ctc_variable || null,
-         notice_period, last_working_day || null,
-         holding_offer || false, holding_offer_details,
-         referral_name, referral_phone, referral_bonus_eligible || false,
-         assessment_soft_skills || null, assessment_stability || null,
-         assessment_technical || null, assessment_experience || null,
-         cv_text, cv_storage_path || null, req.user.id]
+        'INSERT INTO candidates (name, email, phone, location, experience_years, skills, "current_role", current_company, education, current_ctc_fixed, current_ctc_variable, expected_ctc_fixed, expected_ctc_variable, notice_period, last_working_day, holding_offer, holding_offer_details, referral_name, referral_phone, referral_bonus_eligible, assessment_soft_skills, assessment_stability, assessment_technical, assessment_experience, cv_text, cv_url, owner_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27) RETURNING *',
+        [b.name, b.email, b.phone, b.location, b.experience_years || null, b.skills, b.current_role, b.current_company, b.education, b.current_ctc_fixed || null, b.current_ctc_variable || null, b.expected_ctc_fixed || null, b.expected_ctc_variable || null, b.notice_period, b.last_working_day || null, b.holding_offer || false, b.holding_offer_details, b.referral_name, b.referral_phone, b.referral_bonus_eligible || false, b.assessment_soft_skills || null, b.assessment_stability || null, b.assessment_technical || null, b.assessment_experience || null, safeCvText, b.cv_storage_path || null, req.user.id]
       );
       const candidate = cr.rows[0];
-
-      if (job_id) {
-        await client.query(
-          'INSERT INTO pipeline (candidate_id, job_id, status, ai_match_percent, ai_match_details, updated_by) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING',
-          [candidate.id, job_id, 'New', ai_match_percent || null, ai_match_details ? JSON.stringify(ai_match_details) : null, req.user.id]
-        );
-        await client.query(
-          'INSERT INTO candidate_status_history (candidate_id, job_id, new_status, changed_by) VALUES ($1,$2,$3,$4)',
-          [candidate.id, job_id, 'New', req.user.id]
-        );
+      console.log('[Candidate] Saved OK:', candidate.name, 'cv_url:', candidate.cv_url || 'STILL NULL');
+      if (b.job_id) {
+        await client.query('INSERT INTO pipeline (candidate_id, job_id, status, ai_match_percent, ai_match_details, updated_by) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING', [candidate.id, b.job_id, 'New', b.ai_match_percent || null, b.ai_match_details ? JSON.stringify(b.ai_match_details) : null, req.user.id]);
+        await client.query('INSERT INTO candidate_status_history (candidate_id, job_id, new_status, changed_by) VALUES ($1,$2,$3,$4)', [candidate.id, b.job_id, 'New', req.user.id]);
       }
-
-      await client.query(
-        'INSERT INTO activity_log (user_id, action, entity_type, entity_id, details) VALUES ($1,$2,$3,$4,$5)',
-        [req.user.id, 'CREATE', 'candidate', candidate.id, JSON.stringify({ name, job_id })]
-      );
+      await client.query('INSERT INTO activity_log (user_id, action, entity_type, entity_id, details) VALUES ($1,$2,$3,$4,$5)', [req.user.id, 'CREATE', 'candidate', candidate.id, JSON.stringify({ name: b.name })]);
       return candidate;
     });
-
     res.status(201).json({ candidate: result });
   } catch (err) { console.error('Create candidate error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
-// PUT /api/candidates/:id
 router.put('/:id', authenticate, async (req, res) => {
   try {
     const existing = await query('SELECT owner_id FROM candidates WHERE id = $1', [req.params.id]);
