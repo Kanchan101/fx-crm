@@ -84,6 +84,14 @@ export default function RequirementDetailPage() {
   const [customNote, setCustomNote] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+
+  // Send CV state
+  const [showSendCV, setShowSendCV] = useState(false);
+  const [selectedSpocEmails, setSelectedSpocEmails] = useState<string[]>([]);
+  const [ccEmails, setCcEmails] = useState('');
+  const [customMessage, setCustomMessage] = useState('');
+  const [sendingCV, setSendingCV] = useState(false);
+  const [cvSent, setCvSent] = useState(false);
   const [copied, setCopied] = useState('');
 
   const headers = () => ({ Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' });
@@ -199,7 +207,26 @@ export default function RequirementDetailPage() {
     return s.length > 0 ? (s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null;
   };
 
-  if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-2 border-fx-600 border-t-transparent rounded-full animate-spin" /></div>;
+  // Send CV
+  const amReviewSelectCount = pipeline.filter(p => p.status === 'AM Review Select').length;
+  const toggleSpocEmail = (email: string) => {
+    setSelectedSpocEmails(prev => prev.includes(email) ? prev.filter(e => e !== email) : [...prev, email]);
+  };
+  const handleSendCV = async () => {
+    if (selectedSpocEmails.length === 0) return;
+    setSendingCV(true); setCvSent(false);
+    try {
+      const ids = pipeline.filter(p => p.status === 'AM Review Select').map(p => p.candidate_id);
+      const cc = ccEmails.split(',').map((e: string) => e.trim()).filter(Boolean);
+      const res = await fetch(`${API}/api/send-cv`, {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({ job_id: params.id, spoc_emails: selectedSpocEmails, cc_emails: cc.length ? cc : undefined, candidate_ids: ids, custom_message: customMessage || undefined }),
+      });
+      const data = await res.json();
+      if (data.success) { setCvSent(true); fetchDetail(); } else alert(data.error || 'Failed');
+    } catch (err) { console.error(err); }
+    finally { setSendingCV(false); }
+  };  if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-2 border-fx-600 border-t-transparent rounded-full animate-spin" /></div>;
   if (!requirement) return <div className="text-center py-20"><p className="text-gray-500">Requirement not found</p><button onClick={() => router.back()} className="text-fx-600 text-sm mt-2 hover:underline">Go back</button></div>;
 
   const priorityBg: Record<string, string> = { Critical: 'bg-red-500', High: 'bg-orange-400', Medium: 'bg-blue-400', Low: 'bg-green-400' };
@@ -248,7 +275,11 @@ export default function RequirementDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <button onClick={() => openOutreach()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-violet-600 hover:bg-violet-700 text-white rounded-lg font-medium transition-colors">
+          {amReviewSelectCount > 0 && (
+            <button onClick={() => { setShowSendCV(true); setCvSent(false); }} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium">
+              <Send className="w-3 h-3" /> Send CVs ({amReviewSelectCount})
+            </button>
+          )}          <button onClick={() => openOutreach()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-violet-600 hover:bg-violet-700 text-white rounded-lg font-medium transition-colors">
             <Sparkles className="w-3 h-3" /> AI Outreach
           </button>
           <button onClick={copyJD} className="flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-200 rounded-lg hover:bg-gray-50">
@@ -492,7 +523,40 @@ export default function RequirementDetailPage() {
         </div>
       )}
 
-      {/* ===== AI OUTREACH MODAL ===== */}
+
+      {/* ===== SEND CVs MODAL ===== */}
+      {showSendCV && (
+        <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={() => setShowSendCV(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg my-8 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <div><h2 className="text-lg font-semibold text-gray-900">Send CVs to Client</h2><p className="text-xs text-gray-400 mt-0.5">{amReviewSelectCount} candidate{amReviewSelectCount > 1 ? 's' : ''}</p></div>
+              <button onClick={() => setShowSendCV(false)} className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Select SPOCs *</p>
+                {spocs.filter((s: any) => s.email).length === 0 ? <p className="p-3 bg-amber-50 rounded-lg text-sm text-amber-700">No SPOCs found. Add SPOCs in Client page first.</p> : (
+                  <div className="space-y-2">{spocs.filter((s: any) => s.email).map((spoc: any) => (
+                    <button key={spoc.id} onClick={() => toggleSpocEmail(spoc.email)} className={`w-full flex items-center gap-3 p-3 rounded-lg border text-left ${selectedSpocEmails.includes(spoc.email) ? 'border-blue-500 bg-blue-50' : 'border-gray-100 hover:border-gray-200'}`}>
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-medium ${selectedSpocEmails.includes(spoc.email) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400'}`}>{selectedSpocEmails.includes(spoc.email) ? '✓' : ''}</div>
+                      <div><p className="text-sm font-medium text-gray-900">{spoc.name}</p><p className="text-xs text-gray-400">{spoc.email}</p></div>
+                    </button>
+                  ))}</div>
+                )}
+              </div>
+              <div><label className="block text-xs font-medium text-gray-600 mb-1">CC (comma separated)</label><input type="text" value={ccEmails} onChange={e => setCcEmails(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" placeholder="your@email.com" /></div>
+              <div><label className="block text-xs font-medium text-gray-600 mb-1">Custom message (optional)</label><textarea value={customMessage} onChange={e => setCustomMessage(e.target.value)} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none" rows={2} /></div>
+              <div><p className="text-xs font-semibold text-gray-500 uppercase mb-2">Candidates to send</p><div className="space-y-1.5">{pipeline.filter(p => p.status === 'AM Review Select').map(c => <div key={c.id} className="text-xs text-gray-600 px-3 py-1.5 bg-gray-50 rounded-lg"><span className="font-medium">{c.candidate_name}</span> · {c.experience_years}y · {c.candidate_company || ''}</div>)}</div></div>
+            </div>
+            <div className="flex items-center justify-end gap-3 p-5 border-t border-gray-100">
+              <button onClick={() => setShowSendCV(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+              <button onClick={handleSendCV} disabled={sendingCV || cvSent || selectedSpocEmails.length === 0} className={`px-5 py-2 rounded-lg text-sm font-medium flex items-center gap-2 ${cvSent ? 'bg-emerald-500 text-white' : 'bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white'}`}>
+                {cvSent ? <><Check className="w-4 h-4" /> Sent!</> : sendingCV ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Send className="w-4 h-4" /> Send CVs</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}      {/* ===== AI OUTREACH MODAL ===== */}
       {showOutreach && (
         <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={() => setShowOutreach(false)}>
           <div className="bg-white rounded-2xl w-full max-w-2xl my-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
