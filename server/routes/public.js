@@ -7,6 +7,62 @@ const { uploadCV } = require('../lib/storage');
 
 const router = express.Router();
 
+
+function cleanJDMetadata(description, title) {
+  if (!description) return '';
+  let lines = description.split('\n');
+  let cleaned = [];
+  let skipMode = true;
+  
+  // Known metadata patterns to strip from top of JD
+  const metaPatterns = [
+    /^(associate|senior|staff|lead|principal|junior|manager|director|head|vp|chief)/i,
+    /^(commerce|engineering|product|design|data|sales|marketing|operations|finance)/i,
+    /^(location|function|experience|reports to|department|team|division)/i,
+    /^(bengaluru|bangalore|mumbai|delhi|noida|hyderabad|chennai|pune|gurugram|kolkata|pan india)/i,
+    /^(india|remote|onsite|hybrid|full.?time|part.?time|contract)/i,
+    /^\d+[–-]\d+\s*(years|yrs)/i,
+    /^head of/i,
+    /^(sr\.?|senior|junior|staff)\s/i,
+  ];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) {
+      if (!skipMode) cleaned.push('');
+      continue;
+    }
+    
+    if (skipMode) {
+      // Check if this line matches metadata patterns
+      const isMeta = metaPatterns.some(p => p.test(trimmed));
+      const isShortMeta = trimmed.length < 60 && !trimmed.startsWith('•') && !trimmed.startsWith('-');
+      
+      // If line matches the job title itself, skip it
+      if (title && trimmed.toLowerCase().includes(title.toLowerCase().substring(0, 20))) {
+        continue;
+      }
+      
+      if (isMeta && isShortMeta) continue;
+      
+      // Once we hit a real content line (About, The Role, etc.), stop skipping
+      if (trimmed.match(/^(About|The Role|Overview|Summary|What|Key |This role|We are|Join|Position)/i) || trimmed.length > 80) {
+        skipMode = false;
+        cleaned.push(trimmed);
+      } else if (isShortMeta) {
+        continue;
+      } else {
+        skipMode = false;
+        cleaned.push(trimmed);
+      }
+    } else {
+      cleaned.push(trimmed);
+    }
+  }
+  
+  return cleaned.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function getPublicLabel(industry) {
   const ind = (industry || '').toLowerCase();
   if (ind.includes('hvac') || ind.includes('engineering')) return 'A world-leading manufacturing company in the HVAC space';
@@ -122,10 +178,11 @@ router.get('/jobs/:id', async (req, res) => {
 
     const job = result.rows[0];
     const publicLabel = getPublicLabel(job.client_industry);
-    const cleanDescription = sanitizeJD(job.description, job.client_name, job.client_industry);
+    const cleanDescription = cleanJDMetadata(sanitizeJD(job.description, job.client_name, job.client_industry), job.title);
 
     res.json({
       title: job.title,
+      full_title: job.title,
       company: publicLabel,
       industry: job.client_industry,
       location: job.location || job.client_location,
