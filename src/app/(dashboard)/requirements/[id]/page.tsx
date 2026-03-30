@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getToken } from '@/lib/api';
 import {
   ArrowLeft, Building2, MapPin, Clock, Users, Copy, ChevronDown,
-  Mail, Phone, Send, Sparkles, Loader2, MessageSquare, Linkedin,
+  Mail, Phone, Send, Sparkles, Loader2, MessageSquare, Linkedin, Calendar, Video,
   Check, X, ExternalLink, Share2, FileText,
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -45,6 +45,9 @@ const STATUS_COLORS: Record<string, string> = {
 
 // Reject reason options
 const REJECT_REASONS = ['Not a fit', 'Client rejected', 'Failed interview', 'Salary mismatch', 'Overqualified', 'Underqualified', 'Other'];
+const INTERVIEW_ROUNDS = ['L1', 'L2', 'L3', 'L4', 'HR'];
+const INTERVIEW_MODES = ['Video Call', 'Phone', 'In-Person', 'Assignment'];
+
 const DROP_REASONS = ['Accepted other offer', 'Not interested', 'Did not respond', 'Counter offer accepted', 'Personal reasons', 'Other'];
 
 interface PipelineEntry {
@@ -57,6 +60,7 @@ interface PipelineEntry {
   assessment_soft_skills: number; assessment_stability: number;
   assessment_technical: number; assessment_experience: number;
   owner_name: string;
+  interview_round: string;
 }
 
 export default function RequirementDetailPage() {
@@ -92,6 +96,13 @@ export default function RequirementDetailPage() {
   const [customMessage, setCustomMessage] = useState('');
   const [sendingCV, setSendingCV] = useState(false);
   const [cvSent, setCvSent] = useState(false);
+
+  // Interview scheduling state
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleCandidate, setScheduleCandidate] = useState<PipelineEntry | null>(null);
+  const [interviewForm, setInterviewForm] = useState({ date: '', time: '', round: 'L1', mode: 'Video Call', meeting_link: '', interviewer_name: '', notes: '' });
+  const [scheduling, setScheduling] = useState(false);
+  const [interviews, setInterviews] = useState<any[]>([]);
   const [copied, setCopied] = useState('');
 
   const headers = () => ({ Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' });
@@ -105,6 +116,7 @@ export default function RequirementDetailPage() {
       setAssignedTeam(data.assigned_team || []);
       setPipeline(data.pipeline || []);
       setSpocs(data.spocs || []);
+      setInterviews(data.interviews || []);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   }, [params.id]);
@@ -226,7 +238,74 @@ export default function RequirementDetailPage() {
       if (data.success) { setCvSent(true); fetchDetail(); } else alert(data.error || 'Failed');
     } catch (err) { console.error(err); }
     finally { setSendingCV(false); }
-  };  if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-2 border-fx-600 border-t-transparent rounded-full animate-spin" /></div>;
+  };  // Schedule Interview
+  const openSchedule = (entry: PipelineEntry) => {
+    setScheduleCandidate(entry);
+    setInterviewForm({ date: '', time: '', round: entry.interview_round || 'L1', mode: 'Video Call', meeting_link: '', interviewer_name: '', notes: '' });
+    setShowSchedule(true);
+  };
+
+  const scheduleInterview = async () => {
+    if (!scheduleCandidate || !interviewForm.date) return;
+    setScheduling(true);
+    try {
+      await fetch(`${API}/api/interviews`, {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({
+          candidate_id: scheduleCandidate.candidate_id,
+          job_id: params.id,
+          pipeline_id: scheduleCandidate.id,
+          interview_date: interviewForm.date,
+          interview_time: interviewForm.time || null,
+          type: interviewForm.round,
+          mode: interviewForm.mode,
+          interviewer_name: interviewForm.interviewer_name,
+          meeting_link: interviewForm.meeting_link,
+          notes: interviewForm.notes,
+        }),
+      });
+      // Update pipeline status to Interview with round
+      await fetch(`${API}/api/requirements/${params.id}/pipeline/${scheduleCandidate.id}/status`, {
+        method: 'PATCH', headers: headers(),
+        body: JSON.stringify({ status: 'Interview', interview_round: interviewForm.round }),
+      });
+      setShowSchedule(false);
+      fetchDetail();
+    } catch (err) { console.error(err); }
+    finally { setScheduling(false); }
+  };
+
+  // Copy interview WhatsApp message
+  const copyInterviewWhatsApp = (entry: PipelineEntry) => {
+    const iv = interviews.find((i: any) => i.candidate_id === entry.candidate_id);
+    const dateStr = iv ? new Date(iv.interview_date).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '[DATE]';
+    const timeStr = iv?.interview_time ? iv.interview_time.substring(0, 5) : '[TIME]';
+    const msg = `Hi ${entry.candidate_name},\n\nYour interview has been scheduled:\n\n*Position:* ${requirement?.title || ''}\n*Company:* ${requirement?.client_name || ''}\n*Date:* ${dateStr}\n*Time:* ${timeStr}\n*Round:* ${iv?.type || entry.interview_round || 'L1'}\n*Mode:* ${iv?.mode || 'Video Call'}${iv?.meeting_link ? '\n*Link:* ' + iv.meeting_link : ''}\n\nPlease confirm your availability.\n\nAll the best!\nFX Consulting Team`;
+    navigator.clipboard.writeText(msg);
+    setCopied('iv-wa-' + entry.id);
+    setTimeout(() => setCopied(''), 2000);
+  };
+
+  // Send interview schedule email
+  const sendInterviewEmail = async (entry: PipelineEntry) => {
+    const iv = interviews.find((i: any) => i.candidate_id === entry.candidate_id);
+    if (!entry.candidate_email) { alert('No email for this candidate'); return; }
+    const dateStr = iv ? new Date(iv.interview_date).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '[DATE]';
+    const timeStr = iv?.interview_time ? iv.interview_time.substring(0, 5) : '[TIME]';
+    const subject = `Interview Schedule: ${requirement?.title} at ${requirement?.client_name}`;
+    const body = `Dear ${entry.candidate_name},\n\nCongratulations! Your profile has been shortlisted for the ${requirement?.title} position at ${requirement?.client_name}.\n\nInterview Details:\n━━━━━━━━━━━━━━━━━\nDate: ${dateStr}\nTime: ${timeStr}\nRound: ${iv?.type || entry.interview_round || 'L1'}\nMode: ${iv?.mode || 'Video Call'}${iv?.meeting_link ? '\nMeeting Link: ' + iv.meeting_link : ''}${iv?.interviewer_name ? '\nInterviewer: ' + iv.interviewer_name : ''}\n━━━━━━━━━━━━━━━━━\n\nPlease confirm your availability by replying to this email.\n\nDocuments to keep ready:\n- Updated Resume\n- Government ID proof\n- Salary slips (last 3 months)\n\nAll the best!\n\nRegards,\nFX Consulting Team`;
+    try {
+      const res = await fetch(`${API}/api/outreach/send-email`, {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({ to_email: entry.candidate_email, to_name: entry.candidate_name, subject, body, job_id: params.id }),
+      });
+      const data = await res.json();
+      if (data.success) { setCopied('iv-email-' + entry.id); setTimeout(() => setCopied(''), 3000); }
+      else alert(data.error || 'Failed to send');
+    } catch (err) { console.error(err); }
+  };
+
+  if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-2 border-fx-600 border-t-transparent rounded-full animate-spin" /></div>;
   if (!requirement) return <div className="text-center py-20"><p className="text-gray-500">Requirement not found</p><button onClick={() => router.back()} className="text-fx-600 text-sm mt-2 hover:underline">Go back</button></div>;
 
   const priorityBg: Record<string, string> = { Critical: 'bg-red-500', High: 'bg-orange-400', Medium: 'bg-blue-400', Low: 'bg-green-400' };
@@ -429,6 +508,7 @@ export default function RequirementDetailPage() {
                         <span className={clsx('px-1.5 py-0.5 rounded text-[10px] font-medium', STATUS_COLORS[entry.status] || 'bg-gray-100 text-gray-600')}>
                           {entry.status}
                         </span>
+                        {entry.status === 'Interview' && entry.interview_round && <span className="px-1 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-600">{entry.interview_round}</span>}
                         {entry.reject_reason && <span className="text-[10px] text-red-400">({entry.reject_reason})</span>}
                         {entry.drop_reason && <span className="text-[10px] text-gray-400">({entry.drop_reason})</span>}
                       </div>
@@ -465,6 +545,22 @@ export default function RequirementDetailPage() {
                         className="px-2 py-1 text-[10px] bg-violet-50 text-violet-600 hover:bg-violet-100 rounded font-medium transition-colors flex items-center gap-1">
                         <Send className="w-3 h-3" /> Outreach
                       </button>
+                      {entry.status === 'Interview' && (
+                        <>
+                          <button onClick={(e) => { e.stopPropagation(); openSchedule(entry); }}
+                            className="px-2 py-1 text-[10px] bg-amber-50 text-amber-700 hover:bg-amber-100 rounded font-medium transition-colors flex items-center gap-1">
+                            <Calendar className="w-3 h-3" /> Schedule
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); sendInterviewEmail(entry); }}
+                            className="px-2 py-1 text-[10px] bg-blue-50 text-blue-600 hover:bg-blue-100 rounded font-medium transition-colors flex items-center gap-1">
+                            {copied === 'iv-email-' + entry.id ? <><Check className="w-3 h-3" /> Sent</> : <><Mail className="w-3 h-3" /> Email</>}
+                          </button>
+                          <button onClick={(e) => { e.stopPropagation(); copyInterviewWhatsApp(entry); }}
+                            className="px-2 py-1 text-[10px] bg-green-50 text-green-700 hover:bg-green-100 rounded font-medium transition-colors flex items-center gap-1">
+                            {copied === 'iv-wa-' + entry.id ? <><Check className="w-3 h-3" /> Copied</> : <><MessageSquare className="w-3 h-3" /> WhatsApp</>}
+                          </button>
+                        </>
+                      )}
                       <select value={entry.status}
                         onChange={(e) => { e.stopPropagation(); handleStatusChange(entry, e.target.value); }}
                         onClick={(e) => e.stopPropagation()}
@@ -556,7 +652,67 @@ export default function RequirementDetailPage() {
             </div>
           </div>
         </div>
-      )}      {/* ===== AI OUTREACH MODAL ===== */}
+      )}      {/* ===== SCHEDULE INTERVIEW MODAL ===== */}
+      {showSchedule && scheduleCandidate && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setShowSchedule(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2"><Calendar className="w-5 h-5 text-amber-500" /> Schedule Interview</h2>
+                <p className="text-xs text-gray-400 mt-0.5">{scheduleCandidate.candidate_name} — {requirement.title}</p>
+              </div>
+              <button onClick={() => setShowSchedule(false)} className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center"><X className="w-4 h-4" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Date *</label>
+                  <input type="date" value={interviewForm.date} onChange={e => setInterviewForm({...interviewForm, date: e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Time</label>
+                  <input type="time" value={interviewForm.time} onChange={e => setInterviewForm({...interviewForm, time: e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Round</label>
+                  <select value={interviewForm.round} onChange={e => setInterviewForm({...interviewForm, round: e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                    {INTERVIEW_ROUNDS.map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Mode</label>
+                  <select value={interviewForm.mode} onChange={e => setInterviewForm({...interviewForm, mode: e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                    {INTERVIEW_MODES.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Meeting Link</label>
+                <input type="url" placeholder="https://meet.google.com/..." value={interviewForm.meeting_link} onChange={e => setInterviewForm({...interviewForm, meeting_link: e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Interviewer Name</label>
+                <input type="text" placeholder="Interviewer name" value={interviewForm.interviewer_name} onChange={e => setInterviewForm({...interviewForm, interviewer_name: e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+                <textarea placeholder="Any special instructions..." value={interviewForm.notes} onChange={e => setInterviewForm({...interviewForm, notes: e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none" rows={2} />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 p-5 border-t border-gray-100">
+              <button onClick={() => setShowSchedule(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+              <button onClick={scheduleInterview} disabled={scheduling || !interviewForm.date} className="px-5 py-2 rounded-lg text-sm font-medium bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white flex items-center gap-2">
+                {scheduling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Calendar className="w-4 h-4" />}
+                {scheduling ? 'Scheduling...' : 'Schedule Interview'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== AI OUTREACH MODAL ===== */}
       {showOutreach && (
         <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 p-4 overflow-y-auto" onClick={() => setShowOutreach(false)}>
           <div className="bg-white rounded-2xl w-full max-w-2xl my-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
