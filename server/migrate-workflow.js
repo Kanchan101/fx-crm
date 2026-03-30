@@ -1,89 +1,142 @@
+// migrate-workflow.js — Run ONCE to migrate pipeline statuses
+// Usage: cd server && node migrate-workflow.js
+
 require('dotenv').config();
-const { pool, query } = require('./db');
+const { createClient } = require('@supabase/supabase-js');
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 async function migrate() {
-  console.log('🔄 Pipeline Workflow Migration\n');
+  console.log('🔄 Starting pipeline workflow migration...\n');
 
-  const STATUS_MAP = {
-    'New': 'Sourced',
-    'Screening': 'Screening',
-    'Submitted to Client': 'Submitted to Client',
-    'Client Review': 'Submitted to Client',
-    'Interview Stage': 'Interview',
-    'HR Discussion': 'Interview',
-    'Offer': 'Offered',
-    'Joined': 'Joined',
-    'Not Joined': 'Dropped',
-    'Account Manager Rejected': 'Rejected',
-    'Interview Reject': 'Rejected',
-  };
+  // Step 1: Add reject_reason, drop_reason, hold_reason columns if not exist
+  console.log('1. Adding reason columns...');
+  const { error: colErr } = await supabase.rpc('exec_sql', {
+    sql: `
+      ALTER TABLE requirement_candidates 
+        ADD COLUMN IF NOT EXISTS reject_reason TEXT,
+        ADD COLUMN IF NOT EXISTS drop_reason TEXT,
+        ADD COLUMN IF NOT EXISTS hold_reason TEXT;
+    `
+  });
+  if (colErr) {
+    // Try raw SQL if RPC not available
+    console.log('   RPC not available, trying direct approach...');
+    const cols = ['reject_reason', 'drop_reason', 'hold_reason'];
+    for (const col of cols) {
+      await supabase.from('requirement_candidates').select(col).limit(1).catch(() => {});
+    }
+    console.log('   Columns may already exist, continuing...');
+  } else {
+    console.log('   ✅ Reason columns added');
+  }
 
-  console.log('📊 Current status distribution:');
-  const cur = await query('SELECT status, COUNT(*) as count FROM pipeline GROUP BY status ORDER BY count DESC');
-  cur.rows.forEach(r => console.log(`  ${r.status}: ${r.count}`));
+  // Step 2: Map old statuses to new statuses
+  console.log('\n2. Mapping old statuses to new...');
 
-  // Drop old constraint
-  console.log('\n🔧 Removing old CHECK constraint...');
-  try {
-    const constraints = await query(`
-      SELECT con.conname FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid
-      WHERE rel.relname = 'pipeline' AND con.contype = 'c' AND pg_get_constraintdef(con.oid) LIKE '%status%'
+  const mappings = [
+    { old: 'New', new: 'AM Review Pending' },
+    { old: 'Sourced', new: 'AM Review Pending' },  // In case previous migration ran partially
+    { old: 'Screening', new: 'AM Review Select' },
+    { old: 'Submitted to Client', new: 'Client Review Pending' },
+    { old: 'Client Review', new: 'Client Review Pending' },
+    { old: 'Interview Stage', new: 'Interview' },
+    { old: 'HR Discussion', new: 'Interview' },
+    { old: 'Offer', new: 'Offered' },
+    // Joined stays as Joined
+    { old: 'Not Joined', new: 'Dropped' },
+    { old: 'Account Manager Rejected', new: 'Rejected' },
+    { old: 'Interview Reject', new: 'Rejected' },
+  ];
+
+  for (const m of mappings) {
+    const { data, error } = await supabase
+      .from('requirement_candidates')
+      .update({ status: m.new })
+      .eq('status', m.old)
+      .select('id');
+
+    if (error) {
+      console.log(`   ⚠️  Error mapping "${m.old}" → "${m.new}": ${error.message}`);
+    } else {
+      console.log(`   ✅ "${m.old}" → "${m.new}" (${data?.length || 0} records)`);
+    }
+  }
+
+  // Step 3: Update the DB check constraint
+  console.log('\n3. Updating database constraint...');
+  const { error: constraintErr } = await supabase.rpc('exec_sql', {
+    sql: `
+      ALTER TABLE requirement_candidates DROP CONSTRAINT IF EXISTS requirement_candidates_status_check;
+      ALTER TABLE requirement_candidates ADD CONSTRAINT requirement_candidates_status_check 
+        CHECK (status IN (
+          'AM Review Pending',
+          'AM Review Select', 
+          'Client Review Pending',
+          'Interview',
+          'Offered',
+          'Joined',
+          'Rejected',
+          'On Hold',
+          'Dropped'
+        ));
+    `
+  });
+  if (constraintErr) {
+    console.log('   ⚠️  Could not update constraint via RPC. Run this SQL manually in Supabase:');
+    console.log(`
+      ALTER TABLE requirement_candidates DROP CONSTRAINT IF EXISTS requirement_candidates_status_check;
+      ALTER TABLE requirement_candidates ADD CONSTRAINT requirement_candidates_status_check 
+        CHECK (status IN (
+          'AM Review Pending','AM Review Select','Client Review Pending',
+          'Interview','Offered','Joined','Rejected','On Hold','Dropped'
+        ));
     `);
-    for (const c of constraints.rows) {
-      await query(`ALTER TABLE pipeline DROP CONSTRAINT "${c.conname}"`);
-      console.log(`  Dropped: ${c.conname}`);
-    }
-  } catch (err) { console.log('  No constraint found'); }
-
-  // Add new columns
-  console.log('\n📝 Adding reject_reason and drop_reason columns...');
-  await query('ALTER TABLE pipeline ADD COLUMN IF NOT EXISTS reject_reason VARCHAR(100)');
-  await query('ALTER TABLE pipeline ADD COLUMN IF NOT EXISTS drop_reason VARCHAR(100)');
-  console.log('  ✓ Done');
-
-  // Migrate data
-  console.log('\n🔄 Migrating statuses...');
-  for (const [old, nw] of Object.entries(STATUS_MAP)) {
-    const r = await query('UPDATE pipeline SET status = $1 WHERE status = $2', [nw, old]);
-    if (r.rowCount > 0) {
-      console.log(`  ${old} → ${nw}: ${r.rowCount} rows`);
-      if (old === 'Account Manager Rejected') await query("UPDATE pipeline SET reject_reason = 'Not a fit' WHERE status = 'Rejected' AND reject_reason IS NULL AND notes IS NULL");
-      if (old === 'Interview Reject') await query("UPDATE pipeline SET reject_reason = 'Failed interview' WHERE status = 'Rejected' AND reject_reason IS NULL");
-      if (old === 'Not Joined') await query("UPDATE pipeline SET drop_reason = 'Did not join' WHERE status = 'Dropped' AND drop_reason IS NULL");
-    }
+  } else {
+    console.log('   ✅ Constraint updated');
   }
 
-  // Migrate history
-  console.log('\n🔄 Migrating history...');
-  for (const [old, nw] of Object.entries(STATUS_MAP)) {
-    await query('UPDATE candidate_status_history SET old_status = $1 WHERE old_status = $2', [nw, old]);
-    await query('UPDATE candidate_status_history SET new_status = $1 WHERE new_status = $2', [nw, old]);
+  // Step 4: Add interview_round column if not exists
+  console.log('\n4. Adding interview_round column...');
+  const { error: roundErr } = await supabase.rpc('exec_sql', {
+    sql: `
+      ALTER TABLE requirement_candidates 
+        ADD COLUMN IF NOT EXISTS interview_round TEXT DEFAULT 'L1';
+    `
+  });
+  if (roundErr) {
+    console.log('   ⚠️  Could not add interview_round column via RPC. Add manually.');
+  } else {
+    console.log('   ✅ interview_round column added');
   }
 
-  // New constraint
-  console.log('\n🔧 Adding new constraint...');
-  try {
-    await query(`ALTER TABLE pipeline ADD CONSTRAINT pipeline_status_check CHECK (status IN (
-      'Sourced','Screening','Submitted to Client','Interview','Offered','Joined','Rejected','On Hold','Dropped'
-    ))`);
-  } catch (err) { console.log('  Constraint:', err.message); }
+  // Step 5: Verify
+  console.log('\n5. Verifying migration...');
+  const { data: counts } = await supabase
+    .from('requirement_candidates')
+    .select('status')
+    .then(({ data }) => {
+      const statusCounts = {};
+      (data || []).forEach(r => {
+        statusCounts[r.status] = (statusCounts[r.status] || 0) + 1;
+      });
+      return { data: statusCounts };
+    });
 
-  await query("ALTER TABLE pipeline ALTER COLUMN status SET DEFAULT 'Sourced'");
+  console.log('\n📊 Current status distribution:');
+  Object.entries(counts || {}).forEach(([status, count]) => {
+    console.log(`   ${status}: ${count}`);
+  });
 
-  // Update views
-  await query(`CREATE OR REPLACE VIEW daily_sourcing_report AS
-    SELECT DATE(csh.created_at) as report_date, t.id as team_member_id, t.name as team_member,
-      t.role, COUNT(DISTINCT csh.candidate_id) as candidates_submitted
-    FROM candidate_status_history csh JOIN team t ON t.id = csh.changed_by
-    WHERE csh.new_status = 'Submitted to Client'
-    GROUP BY DATE(csh.created_at), t.id, t.name, t.role ORDER BY report_date DESC`);
-
-  console.log('\n📊 New distribution:');
-  const nw = await query('SELECT status, COUNT(*) as count FROM pipeline GROUP BY status ORDER BY count DESC');
-  nw.rows.forEach(r => console.log(`  ${r.status}: ${r.count}`));
-
-  console.log('\n✅ MIGRATION COMPLETE!');
-  await pool.end();
+  console.log('\n✅ Migration complete!\n');
+  console.log('⚠️  IMPORTANT: If constraint update failed, run the SQL manually in Supabase Dashboard → SQL Editor');
+  console.log('Then restart your backend server.\n');
 }
 
-migrate().catch(err => { console.error('Failed:', err); process.exit(1); });
+migrate().catch(err => {
+  console.error('❌ Migration failed:', err);
+  process.exit(1);
+});

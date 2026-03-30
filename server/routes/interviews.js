@@ -1,69 +1,144 @@
+// routes/interviews.js — COMPLETE FRESH FILE
+// Powers the main Interviews tab on homepage - date-wise view of all interviews
 const express = require('express');
-const { query } = require('../db');
-const { authenticate } = require('../middleware/auth');
-
 const router = express.Router();
+const { supabase } = require('../supabaseClient');
+const { authenticateToken } = require('../middleware/auth');
 
-router.get('/', authenticate, async (req, res) => {
+// GET all interviews (for main Interviews page, date-wise)
+router.get('/', authenticateToken, async (req, res) => {
   try {
-    const { date_from, date_to, scheduled_by } = req.query;
-    let sql = `
-      SELECT i.*,
-        ca.name as candidate_name, ca.phone as candidate_phone, ca.email as candidate_email,
-        j.title as job_title, cl.name as client_name,
-        t.name as scheduled_by_name
-      FROM interviews i
-      JOIN candidates ca ON ca.id = i.candidate_id
-      JOIN jobs j ON j.id = i.job_id
-      JOIN clients cl ON cl.id = j.client_id
-      LEFT JOIN team t ON t.id = i.scheduled_by
-      WHERE 1=1
-    `;
-    const params = [];
-    let idx = 1;
+    const { date_from, date_to, status, round } = req.query;
 
-    if (date_from) { sql += ` AND i.interview_date >= $${idx++}`; params.push(date_from); }
-    if (date_to) { sql += ` AND i.interview_date <= $${idx++}`; params.push(date_to); }
-    if (scheduled_by) { sql += ` AND i.scheduled_by = $${idx++}`; params.push(scheduled_by); }
+    let query = supabase
+      .from('interviews')
+      .select(`
+        *,
+        candidates(id, name, email, phone, current_company, current_designation),
+        requirements(id, title, clients(company_name))
+      `)
+      .order('scheduled_at', { ascending: true });
 
-    sql += ' ORDER BY i.interview_date ASC, i.interview_time ASC';
-    const result = await query(sql, params);
-    res.json({ interviews: result.rows });
+    if (date_from) query = query.gte('scheduled_at', date_from);
+    if (date_to) query = query.lte('scheduled_at', date_to);
+    if (status) query = query.eq('status', status);
+    if (round) query = query.eq('round', round);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    // Group by date for the frontend
+    const grouped = {};
+    (data || []).forEach(interview => {
+      const date = new Date(interview.scheduled_at).toISOString().split('T')[0];
+      if (!grouped[date]) grouped[date] = [];
+      grouped[date].push(interview);
+    });
+
+    res.json({ interviews: data || [], grouped });
   } catch (err) {
-    console.error('List interviews error:', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error('Error fetching interviews:', err);
+    res.status(500).json({ error: 'Failed to fetch interviews' });
   }
 });
 
-router.post('/', authenticate, async (req, res) => {
+// GET single interview
+router.get('/:id', authenticateToken, async (req, res) => {
   try {
-    const { candidate_id, job_id, pipeline_id, interview_date, interview_time, type, mode, interviewer_name, meeting_link, notes } = req.body;
-    if (!candidate_id || !job_id || !interview_date) return res.status(400).json({ error: 'Candidate, job, and date required' });
+    const { data, error } = await supabase
+      .from('interviews')
+      .select(`
+        *,
+        candidates(id, name, email, phone, current_company),
+        requirements(id, title, clients(company_name))
+      `)
+      .eq('id', req.params.id)
+      .single();
 
-    const result = await query(
-      `INSERT INTO interviews (candidate_id, job_id, pipeline_id, interview_date, interview_time, type, mode, interviewer_name, meeting_link, notes, outcome, scheduled_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Scheduled',$11) RETURNING *`,
-      [candidate_id, job_id, pipeline_id || null, interview_date, interview_time || null, type, mode, interviewer_name, meeting_link, notes, req.user.id]
-    );
-
-    res.status(201).json({ interview: result.rows[0] });
+    if (error) throw error;
+    res.json(data);
   } catch (err) {
-    console.error('Create interview error:', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error('Error fetching interview:', err);
+    res.status(500).json({ error: 'Failed to fetch interview' });
   }
 });
 
-router.patch('/:id', authenticate, async (req, res) => {
+// POST create interview
+router.post('/', authenticateToken, async (req, res) => {
   try {
-    const { outcome, notes } = req.body;
-    const result = await query(
-      'UPDATE interviews SET outcome=$1, notes=$2, updated_at=NOW() WHERE id=$3 RETURNING *',
-      [outcome, notes, req.params.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    res.json({ interview: result.rows[0] });
+    const { 
+      requirement_id, candidate_id, scheduled_at, round, 
+      mode, meeting_link, notes, interviewer_name 
+    } = req.body;
+
+    const { data, error } = await supabase
+      .from('interviews')
+      .insert({
+        requirement_id,
+        candidate_id,
+        scheduled_at,
+        round: round || 'L1',
+        mode: mode || 'Video Call',
+        meeting_link: meeting_link || '',
+        notes: notes || '',
+        interviewer_name: interviewer_name || '',
+        status: 'Scheduled',
+        created_by: req.user.id
+      })
+      .select(`
+        *,
+        candidates(id, name, email, phone),
+        requirements(id, title)
+      `)
+      .single();
+
+    if (error) throw error;
+
+    // Update candidate status to Interview with round
+    await supabase
+      .from('requirement_candidates')
+      .update({ status: 'Interview', interview_round: round || 'L1' })
+      .eq('requirement_id', requirement_id)
+      .eq('candidate_id', candidate_id);
+
+    res.status(201).json(data);
   } catch (err) {
-    res.status(500).json({ error: 'Server error' });
+    console.error('Error creating interview:', err);
+    res.status(500).json({ error: 'Failed to create interview' });
+  }
+});
+
+// PUT update interview
+router.put('/:id', authenticateToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('interviews')
+      .update(req.body)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error('Error updating interview:', err);
+    res.status(500).json({ error: 'Failed to update interview' });
+  }
+});
+
+// DELETE interview
+router.delete('/:id', authenticateToken, async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('interviews')
+      .delete()
+      .eq('id', req.params.id);
+
+    if (error) throw error;
+    res.json({ message: 'Interview deleted' });
+  } catch (err) {
+    console.error('Error deleting interview:', err);
+    res.status(500).json({ error: 'Failed to delete interview' });
   }
 });
 

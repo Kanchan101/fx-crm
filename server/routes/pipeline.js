@@ -1,68 +1,116 @@
+// routes/pipeline.js — COMPLETE FRESH FILE
 const express = require('express');
-const { query } = require('../db');
-const { authenticate } = require('../middleware/auth');
-
 const router = express.Router();
+const { supabase } = require('../supabaseClient');
+const { authenticateToken } = require('../middleware/auth');
 
 const VALID_STATUSES = [
-  'Sourced','Screening','Submitted to Client','Interview',
-  'Offered','Joined','Rejected','On Hold','Dropped'
+  'AM Review Pending',
+  'AM Review Select',
+  'Client Review Pending',
+  'Interview',
+  'Offered',
+  'Joined',
+  'Rejected',
+  'On Hold',
+  'Dropped'
 ];
 
-router.get('/', authenticate, async (req, res) => {
+// GET pipeline data for a requirement (used by Kanban board)
+router.get('/requirement/:requirementId', authenticateToken, async (req, res) => {
   try {
-    const { status, job_id, owner, search } = req.query;
-    let sql = `
-      SELECT p.*,
-        ca.name as candidate_name, ca.email as candidate_email, ca.phone as candidate_phone,
-        ca.location as candidate_location, ca.experience_years, ca.skills as candidate_skills,
-        ca."current_role" as candidate_role, ca.current_company,
-        ca.assessment_soft_skills, ca.assessment_stability, ca.assessment_technical, ca.assessment_experience,
-        j.title as job_title, j.location as job_location, j.priority as job_priority,
-        cl.name as client_name, cl.tier as client_tier,
-        t.name as owner_name
-      FROM pipeline p
-      JOIN candidates ca ON ca.id = p.candidate_id
-      JOIN jobs j ON j.id = p.job_id
-      JOIN clients cl ON cl.id = j.client_id
-      LEFT JOIN team t ON t.id = ca.owner_id
-      WHERE 1=1
-    `;
-    const params = []; let idx = 1;
-    if (status && status !== 'All') { sql += ` AND p.status = $${idx++}`; params.push(status); }
-    if (job_id) { sql += ` AND p.job_id = $${idx++}`; params.push(job_id); }
-    if (owner === 'mine') { sql += ` AND ca.owner_id = $${idx++}`; params.push(req.user.id); }
-    if (search) { sql += ` AND (LOWER(ca.name) LIKE $${idx} OR LOWER(j.title) LIKE $${idx} OR LOWER(cl.name) LIKE $${idx})`; params.push(`%${search.toLowerCase()}%`); idx++; }
-    sql += ' ORDER BY p.updated_at DESC';
-    const result = await query(sql, params);
-    res.json({ pipeline: result.rows });
-  } catch (err) { console.error('List pipeline error:', err); res.status(500).json({ error: 'Server error' }); }
+    const { data, error } = await supabase
+      .from('requirement_candidates')
+      .select(`
+        *,
+        candidates(id, name, email, phone, current_company, current_designation,
+                   experience, skills, resume_url, location, current_ctc, expected_ctc, notice_period)
+      `)
+      .eq('requirement_id', req.params.requirementId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    // Group by status for Kanban
+    const pipeline = {};
+    VALID_STATUSES.forEach(s => { pipeline[s] = []; });
+    (data || []).forEach(item => {
+      if (pipeline[item.status]) {
+        pipeline[item.status].push(item);
+      }
+    });
+
+    res.json({ pipeline, candidates: data || [] });
+  } catch (err) {
+    console.error('Error fetching pipeline:', err);
+    res.status(500).json({ error: 'Failed to fetch pipeline data' });
+  }
 });
 
-router.patch('/:id/status', authenticate, async (req, res) => {
+// GET global pipeline overview (all requirements)
+router.get('/overview', authenticateToken, async (req, res) => {
   try {
-    const { status, reject_reason, drop_reason } = req.body;
-    if (!VALID_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status' });
-    const current = await query('SELECT * FROM pipeline WHERE id = $1', [req.params.id]);
-    if (current.rows.length === 0) return res.status(404).json({ error: 'Not found' });
-    const old = current.rows[0].status;
+    const { data, error } = await supabase
+      .from('requirement_candidates')
+      .select(`
+        *,
+        candidates(id, name, email, phone, current_company),
+        requirements(id, title, clients(company_name))
+      `)
+      .order('created_at', { ascending: false });
 
-    let updateSql = 'UPDATE pipeline SET status=$1, updated_by=$2, updated_at=NOW()';
-    const updateParams = [status, req.user.id];
-    let paramIdx = 3;
-    if (status === 'Rejected' && reject_reason) { updateSql += `, reject_reason=$${paramIdx++}`; updateParams.push(reject_reason); }
-    if (status === 'Dropped' && drop_reason) { updateSql += `, drop_reason=$${paramIdx++}`; updateParams.push(drop_reason); }
-    if (!['Rejected','On Hold','Dropped','Joined'].includes(status)) { updateSql += ', reject_reason=NULL, drop_reason=NULL'; }
-    updateSql += ` WHERE id=$${paramIdx}`;
-    updateParams.push(req.params.id);
-    await query(updateSql, updateParams);
+    if (error) throw error;
 
-    await query('INSERT INTO candidate_status_history (pipeline_id,candidate_id,job_id,old_status,new_status,changed_by) VALUES ($1,$2,$3,$4,$5,$6)',
-      [req.params.id, current.rows[0].candidate_id, current.rows[0].job_id, old, status, req.user.id]);
-    await query('INSERT INTO activity_log (user_id,action,entity_type,entity_id,details) VALUES ($1,$2,$3,$4,$5)',
-      [req.user.id, 'STATUS_CHANGE', 'pipeline', req.params.id, JSON.stringify({ from: old, to: status })]);
-    res.json({ message: 'Updated', old_status: old, new_status: status });
-  } catch (err) { console.error('Update status error:', err); res.status(500).json({ error: 'Server error' }); }
+    const pipeline = {};
+    VALID_STATUSES.forEach(s => { pipeline[s] = []; });
+    (data || []).forEach(item => {
+      if (pipeline[item.status]) {
+        pipeline[item.status].push(item);
+      }
+    });
+
+    res.json({ pipeline, total: (data || []).length });
+  } catch (err) {
+    console.error('Error fetching pipeline overview:', err);
+    res.status(500).json({ error: 'Failed to fetch pipeline overview' });
+  }
+});
+
+// PATCH update candidate status (drag & drop in Kanban)
+router.patch('/move', authenticateToken, async (req, res) => {
+  try {
+    const { requirement_id, candidate_id, status, reject_reason, drop_reason, hold_reason, interview_round } = req.body;
+
+    if (!VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+
+    const updateData = { status };
+    if (status === 'Rejected' && reject_reason) updateData.reject_reason = reject_reason;
+    if (status === 'Dropped' && drop_reason) updateData.drop_reason = drop_reason;
+    if (status === 'On Hold' && hold_reason) updateData.hold_reason = hold_reason;
+    if (status === 'Interview' && interview_round) updateData.interview_round = interview_round;
+
+    if (!['Rejected', 'On Hold', 'Dropped'].includes(status)) {
+      updateData.reject_reason = null;
+      updateData.drop_reason = null;
+      updateData.hold_reason = null;
+    }
+
+    const { data, error } = await supabase
+      .from('requirement_candidates')
+      .update(updateData)
+      .eq('requirement_id', requirement_id)
+      .eq('candidate_id', candidate_id)
+      .select(`*, candidates(id, name, email, phone)`)
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error('Error moving candidate:', err);
+    res.status(500).json({ error: 'Failed to update candidate status' });
+  }
 });
 
 module.exports = router;

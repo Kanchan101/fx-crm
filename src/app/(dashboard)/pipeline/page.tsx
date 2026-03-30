@@ -1,156 +1,203 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
-import { useAuth } from '@/contexts/AuthContext';
-import { getToken } from '@/lib/api';
-import { Kanban, Search, MapPin, Building2 } from 'lucide-react';
-import clsx from 'clsx';
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
 
-const PIPELINE_STATUSES = [
-  'Sourced','Screening','Submitted to Client','Interview','Offered','Joined','Rejected','On Hold','Dropped'
+const KANBAN_COLUMNS = [
+  { key: 'AM Review Pending', label: 'AM Review Pending', color: 'border-t-blue-500', bg: 'bg-blue-50' },
+  { key: 'AM Review Select', label: 'AM Review Select', color: 'border-t-indigo-500', bg: 'bg-indigo-50' },
+  { key: 'Client Review Pending', label: 'Client Review Pending', color: 'border-t-yellow-500', bg: 'bg-yellow-50' },
+  { key: 'Interview', label: 'Interview', color: 'border-t-purple-500', bg: 'bg-purple-50' },
+  { key: 'Offered', label: 'Offered', color: 'border-t-orange-500', bg: 'bg-orange-50' },
+  { key: 'Joined', label: 'Joined', color: 'border-t-green-500', bg: 'bg-green-50' },
 ];
 
-const SHORT_LABELS: Record<string, string> = {
-  'Sourced':'Sourced','Screening':'Screening','Submitted to Client':'Submitted',
-  'Interview':'Interview','Offered':'Offered','Joined':'Joined',
-  'Rejected':'Rejected','On Hold':'On Hold','Dropped':'Dropped'
-};
+const EXIT_COLUMNS = [
+  { key: 'Rejected', label: 'Rejected', color: 'border-t-red-500', bg: 'bg-red-50' },
+  { key: 'On Hold', label: 'On Hold', color: 'border-t-gray-400', bg: 'bg-gray-50' },
+  { key: 'Dropped', label: 'Dropped', color: 'border-t-pink-500', bg: 'bg-pink-50' },
+];
 
-const COL_COLORS: Record<string, string> = {
-  'Sourced':'border-t-gray-400','Screening':'border-t-blue-400',
-  'Submitted to Client':'border-t-purple-400','Interview':'border-t-amber-400',
-  'Offered':'border-t-teal-400','Joined':'border-t-green-500',
-  'Rejected':'border-t-red-400','On Hold':'border-t-yellow-400','Dropped':'border-t-gray-500'
-};
+function getToken() {
+  if (typeof window !== 'undefined') return localStorage.getItem('token');
+  return null;
+}
 
-interface PipelineEntry {
-  id: string; status: string; candidate_name: string; candidate_location: string;
-  experience_years: number; candidate_role: string; current_company: string;
-  job_title: string; client_name: string; client_tier: string; job_priority: string;
-  ai_match_percent: number; owner_name: string;
-  reject_reason: string; drop_reason: string;
-  assessment_soft_skills: number; assessment_stability: number;
-  assessment_technical: number; assessment_experience: number;
-  candidate_id: string;
+function authHeaders() {
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` };
 }
 
 export default function PipelinePage() {
-  const router = useRouter();
-  const { user } = useAuth();
-  const [pipeline, setPipeline] = useState<PipelineEntry[]>([]);
+  const [requirements, setRequirements] = useState<any[]>([]);
+  const [selectedReqId, setSelectedReqId] = useState('');
+  const [pipeline, setPipeline] = useState<Record<string, any[]>>({});
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [ownerFilter, setOwnerFilter] = useState('all');
+  const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
+  const [showExitColumns, setShowExitColumns] = useState(false);
 
-  const headers = () => ({ Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' });
+  // Fetch requirements list
+  useEffect(() => {
+    const fetchReqs = async () => {
+      try {
+        const res = await fetch(`${API}/requirements`, { headers: authHeaders() });
+        if (!res.ok) throw new Error('Failed to fetch');
+        const data = await res.json();
+        setRequirements(data);
+        if (data.length > 0 && !selectedReqId) setSelectedReqId(data[0].id);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Something went wrong");
+      }
+    };
+    fetchReqs();
+  }, []);
 
-  const fetchPipeline = useCallback(async () => {
+  // Fetch pipeline for selected requirement
+  useEffect(() => {
+    if (!selectedReqId) return;
+    const fetchPipeline = async () => {
+      try {
+        setLoading(true);
+        const res = await fetch(`${API}/pipeline/requirement/${selectedReqId}`, { headers: authHeaders() });
+        if (!res.ok) throw new Error('Failed to fetch pipeline');
+        const data = await res.json();
+        setPipeline(data.pipeline || {});
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Something went wrong");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchPipeline();
+  }, [selectedReqId]);
+
+  // Move candidate (status change)
+  const moveCandidate = async (candidateId: string, newStatus: string, extras: Record<string, any> = {}) => {
     try {
-      setLoading(true);
-      const params = new URLSearchParams();
-      if (search) params.set('search', search);
-      if (ownerFilter === 'mine') params.set('owner', 'mine');
-      const res = await fetch(`${API}/api/pipeline?${params}`, { headers: headers() });
-      const data = await res.json();
-      setPipeline(data.pipeline || []);
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
-  }, [search, ownerFilter]);
-
-  useEffect(() => { fetchPipeline(); }, [fetchPipeline]);
-
-  const changeStatus = async (id: string, status: string) => {
-    try {
-      await fetch(`${API}/api/pipeline/${id}/status`, {
-        method: 'PATCH', headers: headers(), body: JSON.stringify({ status }),
+      const res = await fetch(`${API}/pipeline/move`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          requirement_id: selectedReqId,
+          candidate_id: candidateId,
+          status: newStatus,
+          ...extras,
+        }),
       });
-      fetchPipeline();
-    } catch (err) { console.error(err); }
+      if (!res.ok) throw new Error('Failed to move candidate');
+      setSuccessMsg(`Moved to ${newStatus}`);
+      setTimeout(() => setSuccessMsg(''), 2000);
+
+      // Refresh pipeline
+      const pRes = await fetch(`${API}/pipeline/requirement/${selectedReqId}`, { headers: authHeaders() });
+      const pData = await pRes.json();
+      setPipeline(pData.pipeline || {});
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    }
   };
 
-  const avgScore = (e: PipelineEntry) => {
-    const s = [e.assessment_soft_skills, e.assessment_stability, e.assessment_technical, e.assessment_experience].filter(Boolean);
-    return s.length > 0 ? (s.reduce((a,b) => a+b, 0) / s.length).toFixed(1) : null;
-  };
-
-  // Show all columns but only render non-empty + key stages
-  const columns = PIPELINE_STATUSES.map(s => ({ status: s, entries: pipeline.filter(p => p.status === s) }))
-    .filter(col => col.entries.length > 0 || ['Sourced','Screening','Submitted to Client','Interview','Offered','Joined'].includes(col.status));
+  const allColumns = showExitColumns ? [...KANBAN_COLUMNS, ...EXIT_COLUMNS] : KANBAN_COLUMNS;
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">{pipeline.length} candidate{pipeline.length !== 1 ? 's' : ''} in pipeline</p>
-        <button onClick={() => setOwnerFilter(ownerFilter === 'mine' ? 'all' : 'mine')}
-          className={clsx('px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors',
-            ownerFilter === 'mine' ? 'bg-fx-600 text-white border-fx-600' : 'bg-white text-gray-600 border-gray-200')}>
-          {ownerFilter === 'mine' ? 'My Pipeline' : 'All Pipeline'}
-        </button>
-      </div>
+    <div className="p-4 md:p-6">
+      {/* Messages */}
+      {successMsg && (
+        <div className="fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg z-50">{successMsg}</div>
+      )}
+      {error && (
+        <div className="fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg z-50">
+          {error}<button onClick={() => setError('')} className="ml-3 font-bold">✕</button>
+        </div>
+      )}
 
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-        <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search candidate, job, client..."
-          className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Pipeline</h1>
+          <p className="text-sm text-gray-500">Kanban view of candidate pipeline</p>
+        </div>
+        <div className="flex gap-3 items-center">
+          <select
+            value={selectedReqId}
+            onChange={(e) => setSelectedReqId(e.target.value)}
+            className="border rounded-lg px-3 py-2 text-sm max-w-xs"
+          >
+            {requirements.map(r => (
+              <option key={r.id} value={r.id}>{r.title} ({r.client_name})</option>
+            ))}
+          </select>
+          <label className="flex items-center gap-1 text-sm text-gray-600 cursor-pointer">
+            <input type="checkbox" checked={showExitColumns} onChange={() => setShowExitColumns(!showExitColumns)} />
+            Show Exit States
+          </label>
+        </div>
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-16">
-          <div className="w-8 h-8 border-2 border-fx-600 border-t-transparent rounded-full animate-spin" />
-        </div>
-      ) : pipeline.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
-          <Kanban className="w-10 h-10 text-gray-200 mx-auto mb-3" />
-          <p className="text-gray-500 text-sm">Pipeline is empty</p>
-          <p className="text-gray-400 text-xs mt-1">Add candidates to positions to see them here</p>
-        </div>
+        <div className="text-center py-12">Loading pipeline...</div>
       ) : (
-        <div className="flex gap-3 overflow-x-auto pb-4">
-          {columns.map(({ status, entries }) => (
-            <div key={status} className="min-w-[220px] w-[220px] shrink-0">
-              <div className={clsx('bg-white rounded-t-lg px-3 py-2 border border-b-0 border-gray-100 border-t-[3px]', COL_COLORS[status])}>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-gray-700">{SHORT_LABELS[status]}</span>
-                  <span className="text-[10px] bg-gray-100 px-1.5 py-0.5 rounded-full text-gray-500 font-medium">{entries.length}</span>
-                </div>
-              </div>
-              <div className="bg-gray-50/50 rounded-b-lg border border-t-0 border-gray-100 p-2 space-y-2 min-h-[120px]">
-                {entries.map((e) => (
-                  <div key={e.id} className="bg-white rounded-lg border border-gray-100 p-3 hover:shadow-sm transition-shadow cursor-pointer"
-                    onClick={() => router.push(`/candidates/${e.candidate_id}`)}>
-                    <p className="text-xs font-semibold text-gray-900 truncate">{e.candidate_name}</p>
-                    <p className="text-[10px] text-gray-400 truncate mt-0.5">{e.job_title} · {e.client_name}</p>
-                    <div className="flex items-center gap-2 mt-1.5 text-[10px] text-gray-400">
-                      {e.experience_years && <span>{e.experience_years}y</span>}
-                      {e.candidate_location && <span>{e.candidate_location}</span>}
+        <div className="overflow-x-auto pb-4">
+          <div className="flex gap-4 min-w-max">
+            {allColumns.map(col => {
+              const items = pipeline[col.key] || [];
+              return (
+                <div key={col.key} className={`w-72 flex-shrink-0 rounded-lg border-t-4 ${col.color} bg-white shadow-sm`}>
+                  {/* Column Header */}
+                  <div className={`p-3 ${col.bg} rounded-t-lg`}>
+                    <div className="flex justify-between items-center">
+                      <h3 className="font-semibold text-sm text-gray-800">{col.label}</h3>
+                      <span className="bg-white px-2 py-0.5 rounded-full text-xs font-bold text-gray-600 shadow-sm">
+                        {items.length}
+                      </span>
                     </div>
-                    {e.ai_match_percent && (
-                      <div className="mt-2 flex items-center gap-1.5">
-                        <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
-                          <div className={clsx('h-full rounded-full', e.ai_match_percent >= 70 ? 'bg-emerald-500' : e.ai_match_percent >= 40 ? 'bg-amber-400' : 'bg-red-400')}
-                            style={{ width: `${e.ai_match_percent}%` }} />
-                        </div>
-                        <span className="text-[10px] font-medium text-gray-500">{e.ai_match_percent}%</span>
-                      </div>
-                    )}
-                    {e.reject_reason && <p className="text-[10px] text-red-400 mt-1">Reason: {e.reject_reason}</p>}
-                    {e.drop_reason && <p className="text-[10px] text-gray-400 mt-1">Reason: {e.drop_reason}</p>}
-                    {avgScore(e) && <p className="text-[10px] text-gray-400 mt-1">Score: {avgScore(e)}/10</p>}
-                    <p className="text-[10px] text-gray-300 mt-1">{e.owner_name}</p>
-                    <select value={e.status} onChange={(ev) => { ev.stopPropagation(); changeStatus(e.id, ev.target.value); }}
-                      onClick={(ev) => ev.stopPropagation()}
-                      className="mt-2 w-full text-[10px] px-2 py-1 border border-gray-100 rounded bg-gray-50 text-gray-600">
-                      {PIPELINE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
                   </div>
-                ))}
-              </div>
-            </div>
-          ))}
+
+                  {/* Cards */}
+                  <div className="p-2 space-y-2 min-h-[200px] max-h-[70vh] overflow-y-auto">
+                    {items.length === 0 ? (
+                      <div className="text-center py-8 text-gray-400 text-xs">No candidates</div>
+                    ) : (
+                      items.map(item => {
+                        const cand = item.candidates || item;
+                        return (
+                          <div key={item.id || item.candidate_id} className="bg-white border rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow">
+                            <div className="font-medium text-sm text-gray-900 truncate">{cand.name}</div>
+                            <div className="text-xs text-gray-500 mt-1 truncate">
+                              {cand.current_designation && `${cand.current_designation} • `}{cand.current_company || 'N/A'}
+                            </div>
+                            <div className="text-xs text-gray-400 mt-1">
+                              {cand.experience && `${cand.experience} yrs`}
+                              {cand.location && ` • ${cand.location}`}
+                            </div>
+                            {item.interview_round && col.key === 'Interview' && (
+                              <div className="text-xs text-purple-600 mt-1">Round: {item.interview_round}</div>
+                            )}
+                            {item.reject_reason && <div className="text-xs text-red-500 mt-1">{item.reject_reason}</div>}
+                            {item.drop_reason && <div className="text-xs text-pink-500 mt-1">{item.drop_reason}</div>}
+                            {item.hold_reason && <div className="text-xs text-gray-500 mt-1">{item.hold_reason}</div>}
+
+                            {/* Quick move dropdown */}
+                            <select
+                              value={item.status}
+                              onChange={(e) => moveCandidate(item.candidate_id, e.target.value)}
+                              className="mt-2 w-full text-xs border rounded px-1 py-1 bg-gray-50"
+                            >
+                              {[...KANBAN_COLUMNS, ...EXIT_COLUMNS].map(c => (
+                                <option key={c.key} value={c.key}>{c.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
