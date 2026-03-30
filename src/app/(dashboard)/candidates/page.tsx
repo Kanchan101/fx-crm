@@ -51,6 +51,8 @@ export default function CandidatesPage() {
   const [cvFile, setCvFile] = useState<File | null>(null);
   const [cvParsing, setCvParsing] = useState(false);
   const [matching, setMatching] = useState(false);
+  const [duplicateResult, setDuplicateResult] = useState<any>(null);
+  const [duplicateChecking, setDuplicateChecking] = useState(false);
   const [matchResult, setMatchResult] = useState<any>(null);
 
   const headers = () => ({ Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' });
@@ -80,7 +82,7 @@ export default function CandidatesPage() {
   useEffect(() => { fetchRequirements(); }, [fetchRequirements]);
 
   const openAddModal = () => {
-    setForm(emptyForm); setCvStep('upload'); setCvFile(null); setMatchResult(null); setError(''); setShowModal(true);
+    setForm(emptyForm); setCvStep('upload'); setCvFile(null); setMatchResult(null); setDuplicateResult(null); setError(''); setShowModal(true);
   };
 
   const handleCvFile = async (file: File) => {
@@ -103,6 +105,21 @@ export default function CandidatesPage() {
         cv_text: data.raw_text || '', cv_storage_path: data.cv_storage_path || '',
       }));
       setCvStep('form');
+      // Check for duplicates
+      if (p.email || p.phone) {
+        setDuplicateChecking(true);
+        try {
+          const dupRes = await fetch(`${API}/api/candidates/check-duplicate`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: p.email, phone: (p.phone || '').replace(/\\D/g, '').slice(-10) }),
+          });
+          const dupData = await dupRes.json();
+          if (dupData.duplicate) setDuplicateResult(dupData);
+          else setDuplicateResult(null);
+        } catch (e) { console.error(e); }
+        finally { setDuplicateChecking(false); }
+      }
     } catch (err: any) { setError(err.message); setCvStep('upload'); }
     finally { setCvParsing(false); }
   };
@@ -262,6 +279,44 @@ export default function CandidatesPage() {
                   {cvFile && (
                     <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 rounded-lg text-sm text-emerald-700">
                       <Check className="w-4 h-4" /><span className="font-medium">CV parsed:</span> {cvFile.name}
+                    </div>
+                  )}
+                  {duplicateChecking && (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 rounded-lg text-sm text-blue-700">
+                      <Loader2 className="w-4 h-4 animate-spin" /> Checking for duplicate candidates...
+                    </div>
+                  )}
+                  {duplicateResult && duplicateResult.duplicate && (
+                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                      <div className="flex items-center gap-2 mb-3">
+                        <AlertCircle className="w-5 h-5 text-amber-600" />
+                        <p className="text-sm font-semibold text-amber-800">Duplicate Candidate Found</p>
+                      </div>
+                      <p className="text-xs text-amber-700 mb-3">A candidate with the same email/phone already exists in the system:</p>
+                      {duplicateResult.matches.map((m: any) => (
+                        <div key={m.id} className="bg-white rounded-lg border border-amber-100 p-3 mb-2 last:mb-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="text-sm font-semibold text-gray-900">{m.name}</p>
+                            <button onClick={() => router.push('/candidates/' + m.id)}
+                              className="text-[10px] text-fx-600 hover:underline">View Profile</button>
+                          </div>
+                          <div className="grid grid-cols-2 gap-1 text-xs text-gray-500">
+                            <span>Email: {m.email || '—'}</span>
+                            <span>Phone: {m.phone || '—'}</span>
+                            <span>Role: {m.current_role || '—'} {m.current_company ? '@ ' + m.current_company : ''}</span>
+                            <span>Exp: {m.experience_years || '—'} years</span>
+                            <span>Uploaded by: {m.uploaded_by || '—'}</span>
+                            <span>Date: {m.uploaded_on ? new Date(m.uploaded_on).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</span>
+                          </div>
+                          {m.mapped_positions && (
+                            <div className="mt-2 pt-2 border-t border-amber-50">
+                              <p className="text-[10px] text-amber-600">Already mapped to: {m.mapped_positions}</p>
+                              {m.pipeline_statuses && <p className="text-[10px] text-amber-500">Status: {m.pipeline_statuses}</p>}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      <p className="text-[10px] text-amber-600 mt-2">You can still save this candidate if this is a different person with the same contact details.</p>
                     </div>
                   )}
                   <div>
