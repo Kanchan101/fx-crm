@@ -20,7 +20,7 @@ router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), asyn
     if (jobResult.rows.length === 0) return res.status(404).json({ error: 'Job not found' });
     const job = jobResult.rows[0];
 
-    // Get candidates
+    // Get candidates — if specific IDs provided, use those; otherwise get all AM Review Select candidates
     let candidateSql, candidateParams;
     if (candidate_ids && candidate_ids.length > 0) {
       candidateSql = `SELECT ca.*, p.status, p.ai_match_percent FROM candidates ca
@@ -30,7 +30,7 @@ router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), asyn
     } else {
       candidateSql = `SELECT ca.*, p.status, p.ai_match_percent FROM candidates ca
         JOIN pipeline p ON p.candidate_id = ca.id AND p.job_id = $1
-        WHERE p.status = 'Submitted to Client' ORDER BY ca.name`;
+        WHERE p.status = 'AM Review Select' ORDER BY ca.name`;
       candidateParams = [job_id];
     }
     const candidates = await query(candidateSql, candidateParams);
@@ -44,7 +44,6 @@ router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), asyn
         try {
           const cvFile = await downloadCV(c.cv_url);
           if (cvFile) {
-            // Create a clean filename: Name_Role.ext
             const cleanName = c.name.replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, '_');
             const ext = c.cv_url.split('.').pop() || 'pdf';
             const attachName = `${cleanName}_${job.title.replace(/[^a-zA-Z0-9 ]/g, '').replace(/\s+/g, '_')}.${ext}`;
@@ -127,7 +126,6 @@ router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), asyn
 
     if (cc_emails && cc_emails.length > 0) emailPayload.cc = cc_emails;
 
-    // Add CV attachments
     if (attachments.length > 0) {
       emailPayload.attachments = attachments.map(a => ({
         filename: a.filename,
@@ -145,6 +143,14 @@ router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), asyn
     }
 
     console.log(`[SendCV] Email sent to ${spoc_emails.join(', ')} with ${attachments.length} attachments`);
+
+    // After sending, update candidate statuses to Client Review Pending
+    for (const c of candidates.rows) {
+      await query(
+        `UPDATE pipeline SET status='Client Review Pending', updated_by=$1, updated_at=NOW() WHERE job_id=$2 AND candidate_id=$3 AND status='AM Review Select'`,
+        [req.user.id, job_id, c.id]
+      );
+    }
 
     await query(
       'INSERT INTO activity_log (user_id, action, entity_type, entity_id, details) VALUES ($1,$2,$3,$4,$5)',
