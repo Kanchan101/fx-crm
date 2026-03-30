@@ -1,9 +1,16 @@
 const express = require('express');
 const { query, transaction } = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { sendAssignmentEmail } = require('../lib/email');
+let sendAssignmentEmail;
+try { sendAssignmentEmail = require('../lib/email').sendAssignmentEmail; } catch(e) { sendAssignmentEmail = null; }
 
 const router = express.Router();
+
+const VALID_STATUSES = [
+  'Sourced','Screening','Submitted to Client','Interview',
+  'Offered','Joined','Rejected','On Hold','Dropped'
+];
+const CLOSED_STATUSES = ['Rejected','On Hold','Dropped'];
 
 router.get('/', authenticate, async (req, res) => {
   try {
@@ -13,7 +20,7 @@ router.get('/', authenticate, async (req, res) => {
         c.name as client_name, c.tier as client_tier, c.location as client_location,
         c.domain as client_domain, c.fee_percent as client_fee_percent, c.spoc_name as client_spoc,
         (SELECT COUNT(*) FROM pipeline p WHERE p.job_id = j.id) as total_candidates,
-        (SELECT COUNT(*) FROM pipeline p WHERE p.job_id = j.id AND p.status NOT IN ('Account Manager Rejected','Not Joined','Interview Reject')) as active_candidates,
+        (SELECT COUNT(*) FROM pipeline p WHERE p.job_id = j.id AND p.status NOT IN ('Rejected','Dropped')) as active_candidates,
         (SELECT COUNT(*) FROM job_assignments ja WHERE ja.job_id = j.id) as assigned_count,
         t.name as created_by_name
       FROM jobs j JOIN clients c ON c.id = j.client_id LEFT JOIN team t ON t.id = j.created_by WHERE 1=1
@@ -58,11 +65,20 @@ router.get('/:id', authenticate, async (req, res) => {
         ca."current_role" as candidate_current_role, ca.current_company as candidate_company,
         ca.assessment_soft_skills, ca.assessment_stability,
         ca.assessment_technical, ca.assessment_experience,
+        ca.cv_url as candidate_cv_url,
         t.name as owner_name
        FROM pipeline p JOIN candidates ca ON ca.id = p.candidate_id
        LEFT JOIN team t ON t.id = ca.owner_id WHERE p.job_id = $1 ORDER BY p.updated_at DESC`, [req.params.id]
     );
-    res.json({ requirement: result.rows[0], assigned_team: assignments.rows, pipeline: pipeline.rows });
+
+    // Get SPOCs
+    let spocs = [];
+    try {
+      const spocResult = await query('SELECT * FROM client_spocs WHERE client_id = $1 ORDER BY is_primary DESC, name', [result.rows[0].client_id]);
+      spocs = spocResult.rows;
+    } catch(e) {}
+
+    res.json({ requirement: result.rows[0], assigned_team: assignments.rows, pipeline: pipeline.rows, spocs });
   } catch (err) { console.error('Get requirement error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -70,7 +86,6 @@ router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), asyn
   try {
     const { title, client_id, location, type, ctc_min, ctc_max, exp_min, exp_max, description, skills, priority, deadline, positions_count, internal_notes, assigned_team_ids } = req.body;
     if (!title || !client_id) return res.status(400).json({ error: 'Title and client required' });
-
     const result = await transaction(async (client) => {
       const jr = await client.query(
         `INSERT INTO jobs (title,client_id,location,type,ctc_min,ctc_max,exp_min,exp_max,description,skills,priority,deadline,positions_count,internal_notes,created_by)
@@ -86,17 +101,12 @@ router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), asyn
       await client.query('INSERT INTO activity_log (user_id,action,entity_type,entity_id,details) VALUES ($1,$2,$3,$4,$5)', [req.user.id,'CREATE','requirement',job.id,JSON.stringify({title})]);
       return job;
     });
-
-    // Send email notifications to assigned team (async, don't block response)
-    if (assigned_team_ids && assigned_team_ids.length > 0) {
-      const clientInfo = await query('SELECT name FROM clients WHERE id = $1', [client_id]);
-      const jobWithClient = { ...result, client_name: clientInfo.rows[0]?.name || '' };
+    if (sendAssignmentEmail && assigned_team_ids && assigned_team_ids.length > 0) {
+      const ci = await query('SELECT name FROM clients WHERE id = $1', [client_id]);
+      const jwc = { ...result, client_name: ci.rows[0]?.name || '' };
       const members = await query('SELECT id, name, email FROM team WHERE id = ANY($1)', [assigned_team_ids]);
-      members.rows.forEach(member => {
-        sendAssignmentEmail(member, jobWithClient, req.user.name, req.user.email).catch(console.error);
-      });
+      members.rows.forEach(m => sendAssignmentEmail(m, jwc, req.user.name).catch(console.error));
     }
-
     res.status(201).json({ requirement: result });
   } catch (err) { console.error('Create requirement error:', err); res.status(500).json({ error: 'Server error' }); }
 });
@@ -104,11 +114,8 @@ router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), asyn
 router.put('/:id', authenticate, authorize('Super Admin', 'Account Manager'), async (req, res) => {
   try {
     const { title, client_id, location, type, ctc_min, ctc_max, exp_min, exp_max, description, skills, priority, deadline, positions_count, status, internal_notes, assigned_team_ids } = req.body;
-
-    // Get existing assignments to find new ones
     const existingAssignments = await query('SELECT team_member_id FROM job_assignments WHERE job_id = $1', [req.params.id]);
     const existingIds = existingAssignments.rows.map(r => r.team_member_id);
-
     const result = await transaction(async (client) => {
       const jr = await client.query(
         `UPDATE jobs SET title=$1,client_id=$2,location=$3,type=$4,ctc_min=$5,ctc_max=$6,exp_min=$7,exp_max=$8,description=$9,skills=$10,priority=$11,deadline=$12,positions_count=$13,status=$14,internal_notes=$15,updated_at=NOW() WHERE id=$16 RETURNING *`,
@@ -124,20 +131,15 @@ router.put('/:id', authenticate, authorize('Super Admin', 'Account Manager'), as
       await client.query('INSERT INTO activity_log (user_id,action,entity_type,entity_id,details) VALUES ($1,$2,$3,$4,$5)', [req.user.id,'UPDATE','requirement',req.params.id,JSON.stringify({title})]);
       return jr.rows[0];
     });
-
-    // Send email to newly assigned members only
-    if (assigned_team_ids && assigned_team_ids.length > 0) {
+    if (sendAssignmentEmail && assigned_team_ids && assigned_team_ids.length > 0) {
       const newAssignees = assigned_team_ids.filter(id => !existingIds.includes(id));
       if (newAssignees.length > 0) {
-        const clientInfo = await query('SELECT name FROM clients WHERE id = $1', [client_id]);
-        const jobWithClient = { ...result, client_name: clientInfo.rows[0]?.name || '' };
+        const ci = await query('SELECT name FROM clients WHERE id = $1', [client_id]);
+        const jwc = { ...result, client_name: ci.rows[0]?.name || '' };
         const members = await query('SELECT id, name, email FROM team WHERE id = ANY($1)', [newAssignees]);
-        members.rows.forEach(member => {
-          sendAssignmentEmail(member, jobWithClient, req.user.name, req.user.email).catch(console.error);
-        });
+        members.rows.forEach(m => sendAssignmentEmail(m, jwc, req.user.name).catch(console.error));
       }
     }
-
     res.json({ requirement: result });
   } catch (err) {
     if (err.message === 'Not found') return res.status(404).json({ error: 'Not found' });
@@ -145,23 +147,42 @@ router.put('/:id', authenticate, authorize('Super Admin', 'Account Manager'), as
   }
 });
 
+// PATCH status — NEW WORKFLOW
 router.patch('/:id/pipeline/:pipelineId/status', authenticate, async (req, res) => {
   try {
-    const { status } = req.body;
-    const validStatuses = [
-      'New','Screening','Submitted to Client','Client Review',
-      'Interview Stage','HR Discussion','Offer','Joined',
-      'Not Joined','Account Manager Rejected','Interview Reject'
-    ];
-    if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
+    const { status, reject_reason, drop_reason } = req.body;
+    if (!VALID_STATUSES.includes(status)) return res.status(400).json({ error: `Invalid status. Valid: ${VALID_STATUSES.join(', ')}` });
     const current = await query('SELECT * FROM pipeline WHERE id = $1 AND job_id = $2', [req.params.pipelineId, req.params.id]);
     if (current.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const old = current.rows[0].status;
-    await query('UPDATE pipeline SET status=$1, updated_by=$2, updated_at=NOW() WHERE id=$3', [status, req.user.id, req.params.pipelineId]);
+
+    // Build update query with optional reason columns
+    let updateSql = 'UPDATE pipeline SET status=$1, updated_by=$2, updated_at=NOW()';
+    const updateParams = [status, req.user.id];
+    let paramIdx = 3;
+
+    if (status === 'Rejected' && reject_reason) {
+      updateSql += `, reject_reason=$${paramIdx++}`;
+      updateParams.push(reject_reason);
+    }
+    if (status === 'Dropped' && drop_reason) {
+      updateSql += `, drop_reason=$${paramIdx++}`;
+      updateParams.push(drop_reason);
+    }
+    // Clear reasons when moving to non-exit status
+    if (!CLOSED_STATUSES.includes(status) && status !== 'Joined') {
+      updateSql += ', reject_reason=NULL, drop_reason=NULL';
+    }
+
+    updateSql += ` WHERE id=$${paramIdx}`;
+    updateParams.push(req.params.pipelineId);
+
+    await query(updateSql, updateParams);
+
     await query('INSERT INTO candidate_status_history (pipeline_id,candidate_id,job_id,old_status,new_status,changed_by) VALUES ($1,$2,$3,$4,$5,$6)',
       [req.params.pipelineId, current.rows[0].candidate_id, req.params.id, old, status, req.user.id]);
     await query('INSERT INTO activity_log (user_id,action,entity_type,entity_id,details) VALUES ($1,$2,$3,$4,$5)',
-      [req.user.id, 'STATUS_CHANGE', 'pipeline', req.params.pipelineId, JSON.stringify({ from: old, to: status })]);
+      [req.user.id, 'STATUS_CHANGE', 'pipeline', req.params.pipelineId, JSON.stringify({ from: old, to: status, reject_reason, drop_reason })]);
     res.json({ message: 'Updated', old_status: old, new_status: status });
   } catch (err) { console.error('Update pipeline status error:', err); res.status(500).json({ error: 'Server error' }); }
 });

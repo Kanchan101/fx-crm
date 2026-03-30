@@ -8,34 +8,28 @@ router.get('/daily-sourcing', authenticate, async (req, res) => {
   try {
     const { date_from, date_to, team_member_id } = req.query;
     let sql = `SELECT * FROM daily_sourcing_report WHERE 1=1`;
-    const params = [];
-    let idx = 1;
+    const params = []; let idx = 1;
     if (date_from) { sql += ` AND report_date >= $${idx++}`; params.push(date_from); }
     if (date_to) { sql += ` AND report_date <= $${idx++}`; params.push(date_to); }
     if (team_member_id) { sql += ` AND team_member_id = $${idx++}`; params.push(team_member_id); }
     sql += ' ORDER BY report_date DESC, candidates_submitted DESC';
     const result = await query(sql, params);
     res.json({ report: result.rows });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Server error' }); }
 });
 
 router.get('/daily-interviews', authenticate, async (req, res) => {
   try {
     const { date_from, date_to, team_member_id } = req.query;
     let sql = `SELECT * FROM daily_interview_report WHERE 1=1`;
-    const params = [];
-    let idx = 1;
+    const params = []; let idx = 1;
     if (date_from) { sql += ` AND report_date >= $${idx++}`; params.push(date_from); }
     if (date_to) { sql += ` AND report_date <= $${idx++}`; params.push(date_to); }
     if (team_member_id) { sql += ` AND team_member_id = $${idx++}`; params.push(team_member_id); }
     sql += ' ORDER BY report_date DESC, interviews_count DESC';
     const result = await query(sql, params);
     res.json({ report: result.rows });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Server error' }); }
 });
 
 router.get('/dashboard-stats', authenticate, async (req, res) => {
@@ -56,9 +50,7 @@ router.get('/dashboard-stats', authenticate, async (req, res) => {
       submitted_this_week: parseInt(submitted.rows[0].count),
       placements_this_month: parseInt(placements.rows[0].count),
     });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Server error' }); }
 });
 
 router.get('/recent-activity', authenticate, async (req, res) => {
@@ -69,9 +61,7 @@ router.get('/recent-activity', authenticate, async (req, res) => {
        ORDER BY al.created_at DESC LIMIT 20`
     );
     res.json({ activities: result.rows });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Server error' }); }
 });
 
 module.exports = router;

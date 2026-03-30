@@ -4,31 +4,42 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { getToken } from '@/lib/api';
-import { Kanban, Search, MapPin } from 'lucide-react';
+import { Kanban, Search, MapPin, Building2 } from 'lucide-react';
 import clsx from 'clsx';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-const STATUSES = ['New','Screening','Submitted to Client','Client Review','Interview Stage','HR Discussion','Offer','Joined','Not Joined','Account Manager Rejected','Interview Reject'];
+
+const PIPELINE_STATUSES = [
+  'Sourced','Screening','Submitted to Client','Interview','Offered','Joined','Rejected','On Hold','Dropped'
+];
+
 const SHORT_LABELS: Record<string, string> = {
-  'New':'New','Screening':'Screening','Submitted to Client':'Submitted','Client Review':'Client Review',
-  'Interview Stage':'Interview','HR Discussion':'HR','Offer':'Offer','Joined':'Joined','Not Joined':'Not Joined','Account Manager Rejected':'AM Rejected','Interview Reject':'Int. Reject'
+  'Sourced':'Sourced','Screening':'Screening','Submitted to Client':'Submitted',
+  'Interview':'Interview','Offered':'Offered','Joined':'Joined',
+  'Rejected':'Rejected','On Hold':'On Hold','Dropped':'Dropped'
 };
+
 const COL_COLORS: Record<string, string> = {
-  'New':'border-t-gray-400','Screening':'border-t-blue-400','Submitted to Client':'border-t-indigo-400',
-  'Client Review':'border-t-purple-400','Interview Stage':'border-t-orange-400','HR Discussion':'border-t-amber-400',
-  'Offer':'border-t-emerald-400','Joined':'border-t-green-500','Not Joined':'border-t-red-400','Account Manager Rejected':'border-t-rose-500','Interview Reject':'border-t-pink-400'
+  'Sourced':'border-t-gray-400','Screening':'border-t-blue-400',
+  'Submitted to Client':'border-t-purple-400','Interview':'border-t-amber-400',
+  'Offered':'border-t-teal-400','Joined':'border-t-green-500',
+  'Rejected':'border-t-red-400','On Hold':'border-t-yellow-400','Dropped':'border-t-gray-500'
 };
 
 interface PipelineEntry {
-  id: string; candidate_id: string; status: string; candidate_name: string; candidate_location: string;
+  id: string; status: string; candidate_name: string; candidate_location: string;
   experience_years: number; candidate_role: string; current_company: string;
-  job_title: string; client_name: string; ai_match_percent: number; owner_name: string;
+  job_title: string; client_name: string; client_tier: string; job_priority: string;
+  ai_match_percent: number; owner_name: string;
+  reject_reason: string; drop_reason: string;
   assessment_soft_skills: number; assessment_stability: number;
   assessment_technical: number; assessment_experience: number;
+  candidate_id: string;
 }
 
 export default function PipelinePage() {
   const router = useRouter();
+  const { user } = useAuth();
   const [pipeline, setPipeline] = useState<PipelineEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -65,7 +76,9 @@ export default function PipelinePage() {
     return s.length > 0 ? (s.reduce((a,b) => a+b, 0) / s.length).toFixed(1) : null;
   };
 
-  const columns = STATUSES.map(s => ({ status: s, entries: pipeline.filter(p => p.status === s) }));
+  // Show all columns but only render non-empty + key stages
+  const columns = PIPELINE_STATUSES.map(s => ({ status: s, entries: pipeline.filter(p => p.status === s) }))
+    .filter(col => col.entries.length > 0 || ['Sourced','Screening','Submitted to Client','Interview','Offered','Joined'].includes(col.status));
 
   return (
     <div className="space-y-5">
@@ -77,6 +90,7 @@ export default function PipelinePage() {
           {ownerFilter === 'mine' ? 'My Pipeline' : 'All Pipeline'}
         </button>
       </div>
+
       <div className="relative max-w-md">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
         <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
@@ -85,11 +99,14 @@ export default function PipelinePage() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-16"><div className="w-8 h-8 border-2 border-fx-600 border-t-transparent rounded-full animate-spin" /></div>
+        <div className="flex justify-center py-16">
+          <div className="w-8 h-8 border-2 border-fx-600 border-t-transparent rounded-full animate-spin" />
+        </div>
       ) : pipeline.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-100 p-12 text-center">
           <Kanban className="w-10 h-10 text-gray-200 mx-auto mb-3" />
           <p className="text-gray-500 text-sm">Pipeline is empty</p>
+          <p className="text-gray-400 text-xs mt-1">Add candidates to positions to see them here</p>
         </div>
       ) : (
         <div className="flex gap-3 overflow-x-auto pb-4">
@@ -103,11 +120,9 @@ export default function PipelinePage() {
               </div>
               <div className="bg-gray-50/50 rounded-b-lg border border-t-0 border-gray-100 p-2 space-y-2 min-h-[120px]">
                 {entries.map((e) => (
-                  <div key={e.id} className="bg-white rounded-lg border border-gray-100 p-3 hover:shadow-sm transition-shadow">
-                    <p className="text-xs font-semibold text-gray-900 truncate cursor-pointer hover:text-fx-700 transition-colors"
-                      onClick={() => router.push(`/candidates/${e.candidate_id}`)}>
-                      {e.candidate_name}
-                    </p>
+                  <div key={e.id} className="bg-white rounded-lg border border-gray-100 p-3 hover:shadow-sm transition-shadow cursor-pointer"
+                    onClick={() => router.push(`/candidates/${e.candidate_id}`)}>
+                    <p className="text-xs font-semibold text-gray-900 truncate">{e.candidate_name}</p>
                     <p className="text-[10px] text-gray-400 truncate mt-0.5">{e.job_title} · {e.client_name}</p>
                     <div className="flex items-center gap-2 mt-1.5 text-[10px] text-gray-400">
                       {e.experience_years && <span>{e.experience_years}y</span>}
@@ -122,11 +137,14 @@ export default function PipelinePage() {
                         <span className="text-[10px] font-medium text-gray-500">{e.ai_match_percent}%</span>
                       </div>
                     )}
+                    {e.reject_reason && <p className="text-[10px] text-red-400 mt-1">Reason: {e.reject_reason}</p>}
+                    {e.drop_reason && <p className="text-[10px] text-gray-400 mt-1">Reason: {e.drop_reason}</p>}
                     {avgScore(e) && <p className="text-[10px] text-gray-400 mt-1">Score: {avgScore(e)}/10</p>}
                     <p className="text-[10px] text-gray-300 mt-1">{e.owner_name}</p>
-                    <select value={e.status} onChange={(ev) => changeStatus(e.id, ev.target.value)}
+                    <select value={e.status} onChange={(ev) => { ev.stopPropagation(); changeStatus(e.id, ev.target.value); }}
+                      onClick={(ev) => ev.stopPropagation()}
                       className="mt-2 w-full text-[10px] px-2 py-1 border border-gray-100 rounded bg-gray-50 text-gray-600">
-                      {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                      {PIPELINE_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
                 ))}

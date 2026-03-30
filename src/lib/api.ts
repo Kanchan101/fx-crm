@@ -76,8 +76,8 @@ export const api = {
   },
   pipeline: {
     list: (params?: string) => apiFetch(`/api/pipeline${params ? `?${params}` : ''}`),
-    updateStatus: (id: string, status: string) =>
-      apiFetch(`/api/pipeline/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+    updateStatus: (id: string, status: string, reject_reason?: string, drop_reason?: string) =>
+      apiFetch(`/api/pipeline/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status, reject_reason, drop_reason }) }),
   },
   interviews: {
     list: (params?: string) => apiFetch(`/api/interviews${params ? `?${params}` : ''}`),
