@@ -8,7 +8,7 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
     const job = await res.json();
 
     const title = `${job.title} — ${job.location} | FX Consulting`;
-    const description = `${job.title} | ${job.location} | ${job.experience} experience | Skills: ${job.skills || 'Various'} | Apply now via FX Consulting`;
+    const description = `${job.title} | ${job.experience} experience | ${job.location} | Skills: ${job.skills || 'Various'} | Apply now via FX Consulting`;
 
     return {
       title,
@@ -18,7 +18,6 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
         description,
         type: 'website',
         siteName: 'FX Consulting — Recruitment',
-        url: `https://crm.fxconsulting.in/jobs/${params.id}`,
       },
       twitter: { card: 'summary', title, description },
     };
