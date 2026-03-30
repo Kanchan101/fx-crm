@@ -196,10 +196,29 @@ export default function RequirementDetailPage() {
 
   // --- Share helpers ---
   const publicUrl = `https://crm.fxconsulting.in/jobs/${params.id}`;
+  // Anonymize client name for public sharing
+  const getPublicCompanyLabel = () => {
+    if (!requirement) return 'A leading company';
+    const domain = (requirement.client_domain || requirement.client_industry || '').toLowerCase();
+    if (domain.includes('hvac') || domain.includes('engineering')) return 'A world-leading manufacturing company in the HVAC space';
+    if (domain.includes('internet') || domain.includes('ecommerce') || domain.includes('e-commerce')) return 'One of India\'s leading internet companies';
+    if (domain.includes('it product') || domain.includes('technology')) return 'A leading technology product company';
+    if (domain.includes('it services')) return 'A prominent IT services company';
+    if (domain.includes('bfsi') || domain.includes('banking') || domain.includes('finance')) return 'A top BFSI company';
+    if (domain.includes('telecom')) return 'A leading telecom company';
+    if (domain.includes('healthcare') || domain.includes('pharma')) return 'A leading healthcare company';
+    if (domain.includes('automotive')) return 'A major automotive company';
+    if (domain.includes('retail')) return 'A leading retail brand';
+    if (domain.includes('manufacturing')) return 'A leading manufacturing company';
+    return 'A leading company in the ' + (requirement.client_industry || 'industry') + ' space';
+  };
+
+
 
   const shareLinkedInPost = () => {
     if (!requirement) return;
-    const t = `🚀 We're Hiring: ${requirement.title}\n\n📍 ${requirement.location} | ${requirement.type}\n🏢 ${requirement.client_name}\n📅 Experience: ${requirement.exp_min}-${requirement.exp_max} years\n${requirement.skills ? `\n🔧 Skills: ${requirement.skills}\n` : ''}\n${(requirement.description || '').substring(0, 400)}\n\nApply: ${publicUrl}\n\n#hiring #jobs #recruitment`;
+    const company = getPublicCompanyLabel();
+    const t = `🚀 We're Hiring: ${requirement.title}\n\n📍 ${requirement.location} | ${requirement.type}\n🏢 ${company}\n📅 Experience: ${requirement.exp_min}-${requirement.exp_max} years\n${requirement.skills ? `\n🔧 Skills: ${requirement.skills}\n` : ''}\n${(requirement.description || '').substring(0, 400)}\n\nApply: ${publicUrl}\n\n#hiring #jobs #recruitment`;
     doCopy(t, 'li-post');
   };
 
@@ -209,19 +228,22 @@ export default function RequirementDetailPage() {
 
   const shareWhatsApp = () => {
     if (!requirement) return;
-    const t = `*${requirement.title}*\nCompany: ${requirement.client_name}\nLocation: ${requirement.location}\nExperience: ${requirement.exp_min}-${requirement.exp_max} years\n${requirement.skills ? `\nSkills: ${requirement.skills}` : ''}\n\nApply: ${publicUrl}`;
+    const company = getPublicCompanyLabel();
+    const t = `*${requirement.title}*\nCompany: ${company}\nLocation: ${requirement.location}\nExperience: ${requirement.exp_min}-${requirement.exp_max} years\n${requirement.skills ? `\nSkills: ${requirement.skills}` : ''}\n\nApply: ${publicUrl}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(t)}`, '_blank');
   };
 
   const shareJobBoard = () => {
     if (!requirement) return;
-    const t = `Job Title: ${requirement.title}\nCompany: ${requirement.client_name}\nLocation: ${requirement.location}\nType: ${requirement.type}\nExperience: ${requirement.exp_min}-${requirement.exp_max} years\n\nSkills Required:\n${requirement.skills || 'Not specified'}\n\nJob Description:\n${requirement.description || 'Not specified'}\n\nHow to Apply:\nSend CV to careers@fxconsulting.in with subject "${requirement.title} Application"`;
+    const company = getPublicCompanyLabel();
+    const t = `Job Title: ${requirement.title}\nCompany: ${company}\nLocation: ${requirement.location}\nType: ${requirement.type}\nExperience: ${requirement.exp_min}-${requirement.exp_max} years\n\nSkills Required:\n${requirement.skills || 'Not specified'}\n\nJob Description:\n${requirement.description || 'Not specified'}\n\nHow to Apply:\nSend CV to careers@fxconsulting.in with subject "${requirement.title} Application"`;
     doCopy(t, 'board');
   };
 
   const shareEmail = () => {
     if (!requirement) return;
-    window.open(`mailto:?subject=${encodeURIComponent(`Job: ${requirement.title} at ${requirement.client_name}`)}&body=${encodeURIComponent(`${requirement.title}\n${requirement.client_name}\n${requirement.location}\nExp: ${requirement.exp_min}-${requirement.exp_max}y\n\n${publicUrl}`)}`, '_blank');
+    const company = getPublicCompanyLabel();
+    window.open(`mailto:?subject=${encodeURIComponent(`Job: ${requirement.title} - ${company}`)}&body=${encodeURIComponent(`${requirement.title}\n${company}\n${requirement.location}\nExp: ${requirement.exp_min}-${requirement.exp_max}y\n\n${publicUrl}`)}`, '_blank');
   };
 
   const shareLink = () => { doCopy(publicUrl, 'link'); };

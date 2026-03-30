@@ -11,6 +11,17 @@ export default function PublicJDPage() {
   const params = useParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [job, setJob] = useState<any>(null);
+  const getPublicLabel = (j: any) => {
+    if (!j) return '';
+    const ind = (j.industry || '').toLowerCase();
+    if (ind.includes('hvac') || ind.includes('engineering')) return 'A world-leading manufacturing company in the HVAC space';
+    if (ind.includes('internet')) return 'One of India\'s leading internet companies';
+    if (ind.includes('technology')) return 'A leading technology product company';
+    if (ind.includes('it services')) return 'A prominent IT services company';
+    if (ind.includes('telecom')) return 'A leading telecom company';
+    if (ind.includes('healthcare')) return 'A leading healthcare company';
+    return 'A leading ' + (j.industry || '') + ' company';
+  };
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -98,7 +109,7 @@ export default function PublicJDPage() {
         <div className="max-w-3xl mx-auto px-6 py-12 relative z-10">
           <div className="flex items-center gap-2 text-blue-200 text-sm mb-3">
             <Building2 className="w-4 h-4" />
-            <span>{job.company}</span>
+            <span>{getPublicLabel(job)}</span>
             {job.industry && <><span className="opacity-50">·</span><span>{job.industry}</span></>}
           </div>
           <h1 className="text-3xl sm:text-4xl font-bold mb-5 leading-tight">{job.title}</h1>
@@ -151,7 +162,7 @@ export default function PublicJDPage() {
                 <Check className="w-8 h-8 text-emerald-600" />
               </div>
               <h2 className="text-xl font-bold text-emerald-900 mb-2">Application Submitted</h2>
-              <p className="text-sm text-emerald-700">Thank you for your interest in the <strong>{job.title}</strong> position at <strong>{job.company}</strong>. Our recruitment team will review your CV and get back to you shortly.</p>
+              <p className="text-sm text-emerald-700">Thank you for your interest in the <strong>{job.title}</strong> position at <strong>{getPublicLabel(job)}</strong>. Our recruitment team will review your CV and get back to you shortly.</p>
               <p className="text-xs text-emerald-600 mt-4">— FX Consulting</p>
             </div>
           ) : (
