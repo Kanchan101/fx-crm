@@ -15,16 +15,16 @@ const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 // ===== NEW WORKFLOW STATUSES =====
 const PIPELINE_STATUSES = [
-  'Sourced', 'Screening', 'Submitted to Client', 'Interview',
+  'AM Review Pending', 'AM Review Select', 'Client Review Pending', 'Interview',
   'Offered', 'Joined', 'Rejected', 'On Hold', 'Dropped'
 ];
 
 // Pipeline tab groupings
 const TAB_GROUPS: Record<string, string[]> = {
   all: PIPELINE_STATUSES,
-  sourced: ['Sourced'],
-  in_progress: ['Screening'],
-  submitted: ['Submitted to Client'],
+  am_review_pending: ['AM Review Pending'],
+  am_review_select: ['AM Review Select'],
+  client_review: ['Client Review Pending'],
   interview: ['Interview'],
   offered: ['Offered'],
   closed: ['Joined', 'Rejected', 'On Hold', 'Dropped'],
@@ -32,9 +32,9 @@ const TAB_GROUPS: Record<string, string[]> = {
 
 // Colors
 const STATUS_COLORS: Record<string, string> = {
-  'Sourced': 'bg-gray-100 text-gray-700',
-  'Screening': 'bg-blue-100 text-blue-700',
-  'Submitted to Client': 'bg-purple-100 text-purple-700',
+  'AM Review Pending': 'bg-gray-100 text-gray-700',
+  'AM Review Select': 'bg-blue-100 text-blue-700',
+  'Client Review Pending': 'bg-purple-100 text-purple-700',
   'Interview': 'bg-amber-100 text-amber-700',
   'Offered': 'bg-teal-100 text-teal-700',
   'Joined': 'bg-green-100 text-green-700',
@@ -212,9 +212,9 @@ export default function RequirementDetailPage() {
   // Pipeline tab counts
   const pipelineTabs = [
     { id: 'all', label: 'All', count: pipeline.length },
-    { id: 'sourced', label: 'Sourced', count: pipeline.filter(p => p.status === 'Sourced').length },
-    { id: 'in_progress', label: 'In Progress', count: pipeline.filter(p => p.status === 'Screening').length },
-    { id: 'submitted', label: 'Submitted', count: pipeline.filter(p => p.status === 'Submitted to Client').length },
+    { id: 'am_review_pending', label: 'AM Review Pending', count: pipeline.filter(p => p.status === 'AM Review Pending').length },
+    { id: 'am_review_select', label: 'AM Review Select', count: pipeline.filter(p => p.status === 'AM Review Select').length },
+    { id: 'client_review', label: 'Client Review Pending', count: pipeline.filter(p => p.status === 'Client Review Pending').length },
     { id: 'interview', label: 'Interview', count: pipeline.filter(p => p.status === 'Interview').length },
     { id: 'offered', label: 'Offered', count: pipeline.filter(p => p.status === 'Offered').length },
     { id: 'closed', label: 'Closed', count: pipeline.filter(p => ['Joined','Rejected','On Hold','Dropped'].includes(p.status)).length },
