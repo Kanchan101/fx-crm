@@ -21,6 +21,7 @@ const publicRoutes = require('./routes/public');
 const { authenticate } = require('./middleware/auth');
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 4000;
 
 // Performance middleware
