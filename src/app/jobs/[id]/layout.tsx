@@ -7,8 +7,8 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
     if (!res.ok) throw new Error('Not found');
     const job = await res.json();
 
-    const title = `${job.title} — ${job.location} — ${job.location}`;
-    const description = `${job.title} | | ${job.location} | ${job.experience} experience | Skills: ${job.skills || 'Various'} | Apply now via FX Consulting`;
+    const title = `${job.title} — ${job.location} | FX Consulting`;
+    const description = `${job.title} | ${job.location} | ${job.experience} experience | Skills: ${job.skills || 'Various'} | Apply now via FX Consulting`;
 
     return {
       title,
@@ -20,11 +20,7 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
         siteName: 'FX Consulting — Recruitment',
         url: `https://crm.fxconsulting.in/jobs/${params.id}`,
       },
-      twitter: {
-        card: 'summary',
-        title,
-        description,
-      },
+      twitter: { card: 'summary', title, description },
     };
   } catch {
     return {

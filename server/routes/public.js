@@ -5,6 +5,27 @@ const fs = require('fs');
 const { query, transaction } = require('../db');
 const { uploadCV } = require('../lib/storage');
 
+
+// Strip client name and sensitive info from public JD
+function sanitizeDescription(description, clientName) {
+  if (!description || !clientName) return description;
+  let clean = description;
+  // Remove exact client name (case insensitive)
+  const names = [clientName];
+  // Also try common variations
+  const lower = clientName.toLowerCase();
+  if (lower === 'bb') names.push('bigbasket', 'big basket', 'BigBasket', 'Big Basket', 'BB');
+  if (lower === 'tt') names.push('Trane Technologies', 'trane', 'Trane', 'TT');
+  if (lower === 'statusneo') names.push('StatusNeo', 'statusneo', 'Status Neo');
+  if (lower === 'shaadi.com') names.push('Shaadi.com', 'shaadi', 'Shaadi');
+  
+  for (const name of names) {
+    const regex = new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\const router = express.Router();'), 'gi');
+    clean = clean.replace(regex, '[Company]');
+  }
+  return clean;
+}
+
 const router = express.Router();
 
 const storage = multer.diskStorage({
@@ -47,7 +68,15 @@ router.get('/jobs/:id', async (req, res) => {
     const job = result.rows[0];
     res.json({
       title: job.title,
-      company: job.client_name,
+      company: (() => {
+        const ind = (job.client_industry || '').toLowerCase();
+        if (ind.includes('hvac') || ind.includes('engineering')) return 'A world-leading manufacturing company in the HVAC space';
+        if (ind.includes('internet')) return 'One of India\'s leading internet companies';
+        if (ind.includes('technology')) return 'A leading technology product company';
+        if (ind.includes('it services')) return 'A prominent IT services company';
+        if (ind.includes('telecom')) return 'A leading telecom company';
+        return 'A leading ' + (job.client_industry || '') + ' company';
+      })(),
       industry: job.client_industry,
       location: job.location || job.client_location,
       type: job.type,
@@ -55,7 +84,7 @@ router.get('/jobs/:id', async (req, res) => {
       exp_min: job.exp_min,
       exp_max: job.exp_max,
       skills: job.skills,
-      description: job.description,
+      description: sanitizeDescription(job.description, job.client_name),
       positions: job.positions_count,
       posted_by: 'FX Consulting',
     });
