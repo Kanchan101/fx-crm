@@ -18,14 +18,24 @@ pool.on('connect', () => {
   // Set statement timeout per connection
 });
 
-const query = async (text, params) => {
+const query = async (text, params, retries = 2) => {
   const start = Date.now();
-  const res = await pool.query(text, params);
-  const duration = Date.now() - start;
-  if (duration > 2000) {
-    console.warn(`[SLOW ${duration}ms]`, text.substring(0, 100));
+  try {
+    const res = await pool.query(text, params);
+    const duration = Date.now() - start;
+    if (duration > 2000) {
+      console.warn(`[SLOW ${duration}ms]`, text.substring(0, 100));
+    }
+    return res;
+  } catch (err) {
+    // Retry on connection errors
+    if (retries > 0 && (err.code === 'ECONNRESET' || err.code === '57P01' || err.code === 'EPIPE' || err.message?.includes('Connection terminated'))) {
+      console.warn(`[DB RETRY] ${err.code || err.message} — retrying (${retries} left)`);
+      await new Promise(r => setTimeout(r, 500));
+      return query(text, params, retries - 1);
+    }
+    throw err;
   }
-  return res;
 };
 
 const transaction = async (callback) => {
