@@ -205,4 +205,31 @@ router.patch('/:id/pipeline/:pipelineId/status', authenticate, async (req, res) 
   } catch (err) { console.error('Update pipeline status error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
+// DELETE requirement — Super Admin only
+router.delete('/:id', authenticate, authorize('Super Admin'), async (req, res) => {
+  try {
+    // Delete pipeline entries first
+    await query('DELETE FROM pipeline WHERE job_id = $1', [req.params.id]);
+    // Delete job assignments
+    await query('DELETE FROM job_assignments WHERE job_id = $1', [req.params.id]);
+    // Delete interviews
+    await query('DELETE FROM interviews WHERE job_id = $1', [req.params.id]);
+    // Delete the job
+    const result = await query('DELETE FROM jobs WHERE id = $1 RETURNING title', [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    await query('INSERT INTO activity_log (user_id,action,entity_type,entity_id,details) VALUES ($1,$2,$3,$4,$5)',
+      [req.user.id, 'DELETE', 'requirement', req.params.id, JSON.stringify({ title: result.rows[0].title })]);
+    res.json({ message: 'Requirement deleted' });
+  } catch (err) { console.error('Delete requirement error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+// DELETE candidate from pipeline (remove from a specific requirement)
+router.delete('/:id/pipeline/:pipelineId', authenticate, authorize('Super Admin', 'Account Manager'), async (req, res) => {
+  try {
+    const result = await query('DELETE FROM pipeline WHERE id = $1 AND job_id = $2 RETURNING *', [req.params.pipelineId, req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ message: 'Candidate removed from pipeline' });
+  } catch (err) { console.error('Delete pipeline entry error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
 module.exports = router;

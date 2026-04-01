@@ -7,7 +7,7 @@ import { getToken } from '@/lib/api';
 import {
   Users, Plus, Search, Upload, X, AlertCircle, Sparkles,
   MapPin, Check, Loader2, ChevronDown, Star,
-} from 'lucide-react';
+  Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
@@ -163,6 +163,15 @@ export default function CandidatesPage() {
     return s.length > 0 ? (s.reduce((a, b) => a + b, 0) / s.length).toFixed(1) : null;
   };
 
+  const handleDeleteCand = async (id: string, name: string) => {
+    if (!confirm(`Delete "${name}"? This will remove them from all pipelines.`)) return;
+    try {
+      const res = await fetch(`${API}/api/candidates/${id}`, { method: 'DELETE', headers: headers() });
+      if (res.ok) fetchCandidates();
+      else { const d = await res.json(); alert(d.error || 'Failed to delete'); }
+    } catch (err) { console.error(err); }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -228,6 +237,10 @@ export default function CandidatesPage() {
                     <p>{c.owner_name}</p>
                     <p>{new Date(c.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</p>
                   </div>
+                  <button onClick={(e) => { e.stopPropagation(); handleDeleteCand(c.id, c.name); }}
+                    className="w-7 h-7 rounded-lg bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-500 transition-colors" title="Delete candidate">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               </div>
             </div>

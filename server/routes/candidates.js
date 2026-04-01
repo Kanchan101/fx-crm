@@ -329,4 +329,20 @@ router.put('/:id', authenticate, async (req, res) => {
   } catch (err) { console.error('Update candidate error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
+// DELETE candidate — Super Admin only
+router.delete('/:id', authenticate, authorize('Super Admin'), async (req, res) => {
+  try {
+    // Remove from all pipelines first
+    await query('DELETE FROM pipeline WHERE candidate_id = $1', [req.params.id]);
+    // Remove interviews
+    try { await query('DELETE FROM interviews WHERE candidate_id = $1', [req.params.id]); } catch(e) {}
+    // Delete candidate
+    const result = await query('DELETE FROM candidates WHERE id = $1 RETURNING name', [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    await query('INSERT INTO activity_log (user_id,action,entity_type,entity_id,details) VALUES ($1,$2,$3,$4,$5)',
+      [req.user.id, 'DELETE', 'candidate', req.params.id, JSON.stringify({ name: result.rows[0].name })]);
+    res.json({ message: 'Candidate deleted' });
+  } catch (err) { console.error('Delete candidate error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
 module.exports = router;

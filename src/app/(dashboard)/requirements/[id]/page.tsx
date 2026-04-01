@@ -7,7 +7,7 @@ import { getToken } from '@/lib/api';
 import {
   ArrowLeft, Building2, MapPin, Clock, Users, Copy, ChevronDown,
   Mail, Phone, Send, Sparkles, Loader2, MessageSquare, Linkedin, Calendar, Video,
-  Check, X, ExternalLink, Share2, FileText, Globe,
+  Check, X, ExternalLink, Share2, FileText, Globe, Trash2,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -338,6 +338,14 @@ export default function RequirementDetailPage() {
 
   const shareLink = () => { copyText(publicUrl, 'link'); };
 
+  const removePipelineEntry = async (pipelineId: string, candidateName: string) => {
+    if (!confirm(`Remove "${candidateName}" from this requirement?`)) return;
+    try {
+      await fetch(`${API}/api/requirements/${params.id}/pipeline/${pipelineId}`, { method: 'DELETE', headers: headers() });
+      fetchDetail();
+    } catch (err) { console.error(err); }
+  };
+
   if (loading) return <div className="flex justify-center py-20"><div className="w-8 h-8 border-2 border-fx-600 border-t-transparent rounded-full animate-spin" /></div>;
   if (!requirement) return <div className="text-center py-20"><p className="text-gray-500">Requirement not found</p><button onClick={() => router.back()} className="text-fx-600 text-sm mt-2 hover:underline">Go back</button></div>;
 
@@ -597,6 +605,10 @@ export default function RequirementDetailPage() {
                           </button>
                         </>
                       )}
+                      <button onClick={(e) => { e.stopPropagation(); removePipelineEntry(entry.id, entry.candidate_name); }}
+                        className="px-2 py-1 text-[10px] bg-red-50 text-red-600 hover:bg-red-100 rounded font-medium transition-colors flex items-center gap-1">
+                        <Trash2 className="w-3 h-3" /> Remove
+                      </button>
                       <select value={entry.status}
                         onChange={(e) => { e.stopPropagation(); handleStatusChange(entry, e.target.value); }}
                         onClick={(e) => e.stopPropagation()}

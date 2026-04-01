@@ -3,11 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { api } from '@/lib/api';
+import { api, getToken } from '@/lib/api';
 import {
   Briefcase, Plus, Search, MapPin, Users, Clock, ChevronRight,
   X, Filter, Building2, AlertCircle, Share2,
-} from 'lucide-react';
+  Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 
 interface Requirement {
@@ -177,6 +177,15 @@ export default function RequirementsPage() {
   const openCount = requirements.filter(r => r.status === 'Open').length;
   const totalCount = requirements.length;
 
+  const handleDeleteReq = async (id: string, title: string) => {
+    if (!confirm(`Delete "${title}"? This will remove all pipeline candidates and interviews for this requirement.`)) return;
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000'}/api/requirements/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${getToken()}` } });
+      if (res.ok) fetchRequirements();
+      else { const d = await res.json(); alert(d.error || 'Failed to delete'); }
+    } catch (err) { console.error(err); }
+  };
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -266,6 +275,12 @@ export default function RequirementsPage() {
                     <p className="text-lg font-bold text-gray-900">{req.assigned_count}</p>
                     <p className="text-[10px] text-gray-400 uppercase">Assigned</p>
                   </div>
+
+                  {/* Delete */}
+                  <button onClick={(e) => { e.stopPropagation(); handleDeleteReq(req.id, req.title); }}
+                    className="w-7 h-7 rounded-lg bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-500 transition-colors" title="Delete requirement">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
 
                   {/* Assigned avatars */}
                   {req.assigned_team && req.assigned_team.length > 0 && (
