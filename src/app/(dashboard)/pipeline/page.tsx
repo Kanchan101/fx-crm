@@ -41,8 +41,8 @@ export default function PipelinePage() {
         const res = await fetch(`${API}/api/requirements`, { headers: authHeaders() });
         if (!res.ok) throw new Error('Failed to fetch');
         const data = await res.json();
-        setRequirements(data);
-        if (data.length > 0 && !selectedReqId) setSelectedReqId(data[0].id);
+        setRequirements(data.requirements || data || []);
+        if (Array.isArray(data.requirements || data) && (data.requirements || data).length > 0 && !selectedReqId) setSelectedReqId((data.requirements || data)[0].id);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong");
       }
