@@ -56,10 +56,15 @@ export default function PipelinePage() {
     const fetchPipeline = async () => {
       try {
         setLoading(true);
-        const res = await fetch(`${API}/api/pipeline/requirement/${selectedReqId}`, { headers: authHeaders() });
+        const res = await fetch(`${API}/api/pipeline?job_id=${selectedReqId}`, { headers: authHeaders() });
         if (!res.ok) throw new Error('Failed to fetch pipeline');
         const data = await res.json();
-        setPipeline(data.pipeline || {});
+        // Group by status
+        const grouped: Record<string, any[]> = {};
+        const allStatuses = ['AM Review Pending','AM Review Select','Client Review Pending','Interview','Offered','Joined','Rejected','On Hold','Dropped'];
+        allStatuses.forEach(s => { grouped[s] = []; });
+        (data.pipeline || []).forEach((item: any) => { if (grouped[item.status]) grouped[item.status].push(item); });
+        setPipeline(grouped);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong");
       } finally {
@@ -72,24 +77,23 @@ export default function PipelinePage() {
   // Move candidate (status change)
   const moveCandidate = async (candidateId: string, newStatus: string, extras: Record<string, any> = {}) => {
     try {
-      const res = await fetch(`${API}/api/pipeline/move`, {
+      const res = await fetch(`${API}/api/pipeline/${candidateId}/status`, {
         method: 'PATCH',
         headers: authHeaders(),
-        body: JSON.stringify({
-          requirement_id: selectedReqId,
-          candidate_id: candidateId,
-          status: newStatus,
-          ...extras,
-        }),
+        body: JSON.stringify({ status: newStatus, ...extras }),
       });
       if (!res.ok) throw new Error('Failed to move candidate');
       setSuccessMsg(`Moved to ${newStatus}`);
       setTimeout(() => setSuccessMsg(''), 2000);
 
       // Refresh pipeline
-      const pRes = await fetch(`${API}/api/pipeline/requirement/${selectedReqId}`, { headers: authHeaders() });
+      const pRes = await fetch(`${API}/api/pipeline?job_id=${selectedReqId}`, { headers: authHeaders() });
       const pData = await pRes.json();
-      setPipeline(pData.pipeline || {});
+      const grouped2: Record<string, any[]> = {};
+      const allS = ['AM Review Pending','AM Review Select','Client Review Pending','Interview','Offered','Joined','Rejected','On Hold','Dropped'];
+      allS.forEach(s => { grouped2[s] = []; });
+      (pData.pipeline || []).forEach((item: any) => { if (grouped2[item.status]) grouped2[item.status].push(item); });
+      setPipeline(grouped2);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     }
@@ -157,16 +161,16 @@ export default function PipelinePage() {
                       <div className="text-center py-8 text-gray-400 text-xs">No candidates</div>
                     ) : (
                       items.map(item => {
-                        const cand = item.candidates || item;
+                        const cand = item;
                         return (
                           <div key={item.id || item.candidate_id} className="bg-white border rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow">
-                            <div className="font-medium text-sm text-gray-900 truncate">{cand.name}</div>
+                            <div className="font-medium text-sm text-gray-900 truncate">{cand.candidate_name || cand.name}</div>
                             <div className="text-xs text-gray-500 mt-1 truncate">
-                              {cand.current_designation && `${cand.current_designation} • `}{cand.current_company || 'N/A'}
+                              {cand.candidate_role && `${cand.candidate_role} • `}{cand.current_company || cand.candidate_company || 'N/A'}
                             </div>
                             <div className="text-xs text-gray-400 mt-1">
-                              {cand.experience && `${cand.experience} yrs`}
-                              {cand.location && ` • ${cand.location}`}
+                              {(cand.experience_years || cand.experience) && `${cand.experience_years || cand.experience} yrs`}
+                              {(cand.candidate_location || cand.location) && ` • ${cand.candidate_location || cand.location}`}
                             </div>
                             {item.interview_round && col.key === 'Interview' && (
                               <div className="text-xs text-purple-600 mt-1">Round: {item.interview_round}</div>
@@ -178,7 +182,7 @@ export default function PipelinePage() {
                             {/* Quick move dropdown */}
                             <select
                               value={item.status}
-                              onChange={(e) => moveCandidate(item.candidate_id, e.target.value)}
+                              onChange={(e) => moveCandidate(item.id, e.target.value)}
                               className="mt-2 w-full text-xs border rounded px-1 py-1 bg-gray-50"
                             >
                               {[...KANBAN_COLUMNS, ...EXIT_COLUMNS].map(c => (

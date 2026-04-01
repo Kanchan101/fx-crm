@@ -26,6 +26,9 @@ export default function CandidateDetailPage() {
   const [pipeline, setPipeline] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState<any>({});
+  const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('details');
 
   const fetchCandidate = useCallback(async () => {
@@ -44,6 +47,20 @@ export default function CandidateDetailPage() {
   }, [params.id]);
 
   useEffect(() => { fetchCandidate(); }, [fetchCandidate]);
+
+  const startEdit = () => { setEditForm({...candidate}); setIsEditing(true); };
+  const saveEdit = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`${API}/api/candidates/${params.id}`, {
+        method: 'PUT', headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm),
+      });
+      if (res.ok) { setIsEditing(false); fetchCandidate(); }
+      else { const d = await res.json(); alert(d.error || 'Save failed'); }
+    } catch(err) { console.error(err); }
+    finally { setSaving(false); }
+  };
 
   if (loading) {
     return <div className="flex justify-center py-20"><div className="w-8 h-8 border-2 border-fx-600 border-t-transparent rounded-full animate-spin" /></div>;

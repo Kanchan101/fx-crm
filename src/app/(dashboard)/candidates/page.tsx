@@ -27,7 +27,7 @@ const emptyForm = {
   name: '', email: '', phone: '', location: '', experience_years: '',
   skills: '', current_role: '', current_company: '', education: '',
   current_ctc_fixed: '', current_ctc_variable: '', expected_ctc_fixed: '', expected_ctc_variable: '',
-  notice_period: '', last_working_day: '', holding_offer: false, holding_offer_details: '',
+  notice_period: '', last_working_day: '', holding_offer: false, holding_offer_details: '', remarks: '',
   referral_name: '', referral_phone: '', referral_bonus_eligible: false,
   assessment_soft_skills: '', assessment_stability: '', assessment_technical: '', assessment_experience: '',
   job_id: '', cv_text: '', cv_storage_path: '',
@@ -403,6 +403,7 @@ export default function CandidatesPage() {
                       <div><label className="block text-xs font-medium text-gray-600 mb-1">Holding Offer?</label><label className="flex items-center gap-1.5 mt-1.5 cursor-pointer"><input type="checkbox" checked={form.holding_offer as boolean} onChange={(e) => setForm({...form, holding_offer: e.target.checked})} className="rounded" /><span className="text-sm text-gray-600">Yes</span></label></div>
                     </div>
                     {form.holding_offer && <div className="mt-2"><input type="text" value={form.holding_offer_details} onChange={(e) => setForm({...form, holding_offer_details: e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Offer details..." /></div>}
+                    <div className="col-span-2"><label className="block text-[10px] text-gray-400 mb-1">Remarks / Comments</label><textarea value={form.remarks} onChange={(e) => setForm({...form, remarks: e.target.value})} className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none" rows={2} placeholder="Internal notes about this candidate..." /></div>
                   </div>
                   <div className="border-t border-gray-100 pt-4">
                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Referral</p>
