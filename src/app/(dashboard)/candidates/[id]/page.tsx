@@ -119,7 +119,7 @@ export default function CandidateDetailPage() {
               {c.name?.split(' ').map((w: string) => w[0]).join('').substring(0, 2).toUpperCase()}
             </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-900">{c.name}</h1>
+              <h1 className="text-xl font-bold text-gray-900">{c.name}</h1><div className="flex gap-2 mt-1">{!isEditing ? (<button onClick={startEdit} className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium">Edit Profile</button>) : (<><button onClick={saveEdit} disabled={saving} className="px-3 py-1 text-xs bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium">{saving ? "Saving..." : "Save"}</button><button onClick={() => setIsEditing(false)} className="px-3 py-1 text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-medium">Cancel</button></>)}</div>
               <div className="flex items-center gap-3 text-xs text-gray-400 mt-0.5">
                 {c.current_role && <span className="flex items-center gap-1"><Briefcase className="w-3 h-3" />{c.current_role}</span>}
                 {c.current_company && <span className="flex items-center gap-1"><Building2 className="w-3 h-3" />{c.current_company}</span>}
