@@ -283,8 +283,8 @@ router.post('/', authenticate, async (req, res) => {
       const candidate = cr.rows[0];
       console.log('[Candidate] Saved OK:', candidate.name, 'cv_url:', candidate.cv_url || 'STILL NULL');
       if (b.job_id) {
-        await client.query('INSERT INTO pipeline (candidate_id, job_id, status, ai_match_percent, ai_match_details, updated_by) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING', [candidate.id, b.job_id, 'Sourced', b.ai_match_percent || null, b.ai_match_details ? JSON.stringify(b.ai_match_details) : null, req.user.id]);
-        await client.query('INSERT INTO candidate_status_history (candidate_id, job_id, new_status, changed_by) VALUES ($1,$2,$3,$4)', [candidate.id, b.job_id, 'Sourced', req.user.id]);
+        await client.query('INSERT INTO pipeline (candidate_id, job_id, status, ai_match_percent, ai_match_details, updated_by) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING', [candidate.id, b.job_id, 'AM Review Pending', b.ai_match_percent || null, b.ai_match_details ? JSON.stringify(b.ai_match_details) : null, req.user.id]);
+        await client.query('INSERT INTO candidate_status_history (candidate_id, job_id, new_status, changed_by) VALUES ($1,$2,$3,$4)', [candidate.id, b.job_id, 'AM Review Pending', req.user.id]);
       }
       await client.query('INSERT INTO activity_log (user_id, action, entity_type, entity_id, details) VALUES ($1,$2,$3,$4,$5)', [req.user.id, 'CREATE', 'candidate', candidate.id, JSON.stringify({ name: b.name })]);
       return candidate;

@@ -13,7 +13,7 @@ router.get('/', authenticate, async (req, res) => {
         (SELECT COUNT(*) FROM candidates c WHERE c.owner_id = t.id) as total_candidates,
         (SELECT COUNT(*) FROM pipeline p
          JOIN candidates c ON c.id = p.candidate_id
-         WHERE c.owner_id = t.id AND p.status = 'Submitted to Client'
+         WHERE c.owner_id = t.id AND p.status = 'Client Review Pending'
          AND p.created_at >= DATE_TRUNC('month', NOW())) as monthly_submissions,
         (SELECT COUNT(*) FROM pipeline p
          JOIN candidates c ON c.id = p.candidate_id

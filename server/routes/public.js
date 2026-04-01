@@ -279,12 +279,12 @@ router.post('/jobs/:id/apply', upload.single('cv'), async (req, res) => {
 
       await client.query(
         'INSERT INTO pipeline (candidate_id, job_id, status) VALUES ($1, $2, $3) ON CONFLICT (candidate_id, job_id) DO NOTHING',
-        [candidateId, req.params.id, 'New']
+        [candidateId, req.params.id, 'AM Review Pending']
       );
 
       await client.query(
         'INSERT INTO candidate_status_history (candidate_id, job_id, new_status) VALUES ($1, $2, $3)',
-        [candidateId, req.params.id, 'New']
+        [candidateId, req.params.id, 'AM Review Pending']
       );
 
       await client.query(
