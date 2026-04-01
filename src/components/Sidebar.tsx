@@ -17,7 +17,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Requirements', href: '/requirements', icon: Briefcase },
   { label: 'Candidates', href: '/candidates', icon: Users },
   { label: 'Clients', href: '/clients', icon: Building2 },
-  { label: 'Pipeline', href: '/pipeline', icon: Kanban },
+  { label: 'Funnel', href: '/pipeline', icon: Kanban },
   { label: 'Interviews', href: '/interviews', icon: Calendar },
   { label: 'Reports', href: '/reports', icon: BarChart3 },
   { label: 'Team', href: '/team', icon: UserCog, roles: ['Super Admin'] },

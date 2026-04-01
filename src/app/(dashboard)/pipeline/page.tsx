@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { getToken } from '@/lib/api';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 const KANBAN_COLUMNS = [
   { key: 'AM Review Pending', label: 'AM Review Pending', color: 'border-t-blue-500', bg: 'bg-blue-50' },
@@ -19,11 +20,6 @@ const EXIT_COLUMNS = [
   { key: 'On Hold', label: 'On Hold', color: 'border-t-gray-400', bg: 'bg-gray-50' },
   { key: 'Dropped', label: 'Dropped', color: 'border-t-pink-500', bg: 'bg-pink-50' },
 ];
-
-function getToken() {
-  if (typeof window !== 'undefined') return localStorage.getItem('token');
-  return null;
-}
 
 function authHeaders() {
   return { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` };
@@ -42,7 +38,7 @@ export default function PipelinePage() {
   useEffect(() => {
     const fetchReqs = async () => {
       try {
-        const res = await fetch(`${API}/requirements`, { headers: authHeaders() });
+        const res = await fetch(`${API}/api/requirements`, { headers: authHeaders() });
         if (!res.ok) throw new Error('Failed to fetch');
         const data = await res.json();
         setRequirements(data);
@@ -60,7 +56,7 @@ export default function PipelinePage() {
     const fetchPipeline = async () => {
       try {
         setLoading(true);
-        const res = await fetch(`${API}/pipeline/requirement/${selectedReqId}`, { headers: authHeaders() });
+        const res = await fetch(`${API}/api/pipeline/requirement/${selectedReqId}`, { headers: authHeaders() });
         if (!res.ok) throw new Error('Failed to fetch pipeline');
         const data = await res.json();
         setPipeline(data.pipeline || {});
@@ -76,7 +72,7 @@ export default function PipelinePage() {
   // Move candidate (status change)
   const moveCandidate = async (candidateId: string, newStatus: string, extras: Record<string, any> = {}) => {
     try {
-      const res = await fetch(`${API}/pipeline/move`, {
+      const res = await fetch(`${API}/api/pipeline/move`, {
         method: 'PATCH',
         headers: authHeaders(),
         body: JSON.stringify({
@@ -91,7 +87,7 @@ export default function PipelinePage() {
       setTimeout(() => setSuccessMsg(''), 2000);
 
       // Refresh pipeline
-      const pRes = await fetch(`${API}/pipeline/requirement/${selectedReqId}`, { headers: authHeaders() });
+      const pRes = await fetch(`${API}/api/pipeline/requirement/${selectedReqId}`, { headers: authHeaders() });
       const pData = await pRes.json();
       setPipeline(pData.pipeline || {});
     } catch (err) {
@@ -116,8 +112,8 @@ export default function PipelinePage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Pipeline</h1>
-          <p className="text-sm text-gray-500">Kanban view of candidate pipeline</p>
+          <h1 className="text-2xl font-bold text-gray-900">Recruitment Funnel</h1>
+          <p className="text-sm text-gray-500">Visual overview of candidates across all stages</p>
         </div>
         <div className="flex gap-3 items-center">
           <select
