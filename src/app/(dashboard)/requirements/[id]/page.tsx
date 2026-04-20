@@ -116,7 +116,7 @@ export default function RequirementDetailPage() {
       setRequirement(data.requirement);
       setAssignedTeam(data.assigned_team || []);
       setPipeline(data.pipeline || []);
-      setSpocs(data.spocs || []);
+      const mainSpoc = (data.requirement?.client_spoc && data.requirement?.client_spoc_email) ? [{ id: 'main', name: data.requirement.client_spoc, email: data.requirement.client_spoc_email, phone: data.requirement.client_spoc_phone || '', designation: 'Primary SPOC', is_primary: true }] : []; setSpocs([...mainSpoc, ...(data.spocs || [])]);
       setInterviews(data.interviews || []);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
