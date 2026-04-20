@@ -12,11 +12,15 @@ import clsx from 'clsx';
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
 
 const STATUS_COLORS: Record<string, string> = {
-  'New': 'bg-gray-100 text-gray-700', 'Screening': 'bg-blue-100 text-blue-700',
-  'Submitted to Client': 'bg-indigo-100 text-indigo-700', 'Client Review': 'bg-purple-100 text-purple-700',
-  'Interview Stage': 'bg-orange-100 text-orange-700', 'HR Discussion': 'bg-amber-100 text-amber-700',
-  'Offer': 'bg-emerald-100 text-emerald-700', 'Joined': 'bg-green-100 text-green-700',
-  'Not Joined': 'bg-red-100 text-red-700', 'Account Manager Rejected': 'bg-rose-100 text-rose-700', 'Interview Reject': 'bg-pink-100 text-pink-700',
+  'AM Review Pending': 'bg-gray-100 text-gray-700',
+  'AM Review Select': 'bg-blue-100 text-blue-700',
+  'Client Review Pending': 'bg-purple-100 text-purple-700',
+  'Interview': 'bg-amber-100 text-amber-700',
+  'Offered': 'bg-teal-100 text-teal-700',
+  'Joined': 'bg-green-100 text-green-700',
+  'Rejected': 'bg-red-100 text-red-700',
+  'On Hold': 'bg-yellow-100 text-yellow-700',
+  'Dropped': 'bg-gray-200 text-gray-600',
 };
 
 export default function CandidateDetailPage() {
