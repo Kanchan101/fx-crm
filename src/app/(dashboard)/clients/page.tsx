@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { api } from '@/lib/api';
+import { api, getToken } from '@/lib/api';
 import {
   Building2, Plus, Search, Filter, MapPin, Phone, Mail, User,
   ChevronDown, X, Edit2, Trash2, ExternalLink, Briefcase,
@@ -43,6 +43,8 @@ const emptyForm = {
   payment_terms: 'Net 30', contract_end_date: '', status: 'Active', notes: '',
 };
 
+const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+
 export default function ClientsPage() {
   const { isRole } = useAuth();
   const canEdit = isRole('Super Admin', 'Account Manager');
@@ -56,6 +58,9 @@ export default function ClientsPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [additionalSpocs, setAdditionalSpocs] = useState<any[]>([]);
+  const [newSpoc, setNewSpoc] = useState({ name: '', email: '', phone: '', designation: '' });
+  const [showAddSpoc, setShowAddSpoc] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -85,8 +90,42 @@ export default function ClientsPage() {
     setShowModal(true);
   };
 
+  const fetchClientSpocs = async (clientId: string) => {
+    try {
+      const res = await fetch(`${API}/api/clients/${clientId}/spocs`, { headers: { Authorization: `Bearer ${getToken()}` } });
+      const data = await res.json();
+      setAdditionalSpocs(data.spocs || []);
+    } catch(e) { console.error(e); }
+  };
+
+  const addSpoc = async (clientId: string) => {
+    if (!newSpoc.name || !newSpoc.email) return;
+    try {
+      await fetch(`${API}/api/clients/${clientId}/spocs`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSpoc),
+      });
+      setNewSpoc({ name: '', email: '', phone: '', designation: '' });
+      setShowAddSpoc(false);
+      fetchClientSpocs(clientId);
+    } catch(e) { console.error(e); }
+  };
+
+  const removeSpoc = async (clientId: string, spocId: string) => {
+    if (!confirm('Remove this SPOC?')) return;
+    try {
+      await fetch(`${API}/api/clients/${clientId}/spocs/${spocId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      fetchClientSpocs(clientId);
+    } catch(e) { console.error(e); }
+  };
+
   const openEdit = (client: Client) => {
     setEditingClient(client);
+    fetchClientSpocs(client.id);
     setForm({
       name: client.name || '',
       industry: client.industry || '',
@@ -341,6 +380,47 @@ export default function ClientsPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Additional SPOCs — only show when editing existing client */}
+              {editingClient && (
+                <div className="border-t border-gray-100 pt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Additional SPOCs ({additionalSpocs.length})</p>
+                    <button type="button" onClick={() => setShowAddSpoc(!showAddSpoc)} className="text-xs text-fx-600 hover:text-fx-700 font-medium flex items-center gap-1">
+                      <Plus className="w-3 h-3" /> Add SPOC
+                    </button>
+                  </div>
+                  {additionalSpocs.length > 0 && (
+                    <div className="space-y-2 mb-3">
+                      {additionalSpocs.map((s: any) => (
+                        <div key={s.id} className="flex items-center justify-between p-2 bg-gray-50 rounded-lg">
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">{s.name} {s.is_primary && <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded ml-1">Primary</span>}</p>
+                            <p className="text-xs text-gray-500">{s.email}{s.phone ? ` · ${s.phone}` : ''}{s.designation ? ` · ${s.designation}` : ''}</p>
+                          </div>
+                          <button type="button" onClick={() => removeSpoc(editingClient.id, s.id)} className="w-6 h-6 rounded hover:bg-red-50 flex items-center justify-center text-red-400 hover:text-red-600">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {showAddSpoc && (
+                    <div className="p-3 bg-blue-50 rounded-lg space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <input type="text" placeholder="Name *" value={newSpoc.name} onChange={(e) => setNewSpoc({...newSpoc, name: e.target.value})} className="px-2 py-1.5 border border-gray-200 rounded text-sm" />
+                        <input type="email" placeholder="Email *" value={newSpoc.email} onChange={(e) => setNewSpoc({...newSpoc, email: e.target.value})} className="px-2 py-1.5 border border-gray-200 rounded text-sm" />
+                        <input type="tel" placeholder="Phone" value={newSpoc.phone} onChange={(e) => setNewSpoc({...newSpoc, phone: e.target.value.replace(/\D/g, '').slice(0, 10)})} className="px-2 py-1.5 border border-gray-200 rounded text-sm" maxLength={10} />
+                        <input type="text" placeholder="Designation" value={newSpoc.designation} onChange={(e) => setNewSpoc({...newSpoc, designation: e.target.value})} className="px-2 py-1.5 border border-gray-200 rounded text-sm" />
+                      </div>
+                      <div className="flex gap-2 justify-end">
+                        <button type="button" onClick={() => setShowAddSpoc(false)} className="px-3 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded">Cancel</button>
+                        <button type="button" onClick={() => addSpoc(editingClient.id)} className="px-3 py-1 text-xs bg-fx-600 hover:bg-fx-700 text-white rounded font-medium">Add</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="border-t border-gray-100 pt-4">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Agreement</p>
