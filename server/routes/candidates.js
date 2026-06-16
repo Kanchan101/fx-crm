@@ -120,7 +120,7 @@ router.post('/parse-cv', authenticate, upload.single('cv'), async (req, res) => 
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
           body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-sonnet-4-6',
             max_tokens: 2000,
             messages: [{ role: 'user', content: `Parse this CV/resume text and extract the following information. Return ONLY a JSON object with these exact keys, no markdown, no explanation:
 {
@@ -198,7 +198,7 @@ router.post('/match', authenticate, async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514', max_tokens: 1500,
+        model: 'claude-sonnet-4-6', max_tokens: 1500,
         messages: [{ role: 'user', content: `Compare CV against JD. Return ONLY JSON:
 {"match_percent": number, "matching_skills": ["skill1"], "missing_skills": ["skill1"], "summary": "2-3 sentences"}
 

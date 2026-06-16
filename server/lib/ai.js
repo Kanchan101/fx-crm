@@ -2,7 +2,7 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
 // Use Haiku for fast extraction, Sonnet for analysis
 const FAST_MODEL = 'claude-haiku-4-5-20251001';   // 3x faster, 10x cheaper
-const SMART_MODEL = 'claude-sonnet-4-20250514';    // For matching/outreach
+const SMART_MODEL = 'claude-sonnet-4-6';    // For matching/outreach
 
 async function callClaude(prompt, { model = FAST_MODEL, maxTokens = 2000 } = {}) {
   if (!ANTHROPIC_API_KEY) return null;
