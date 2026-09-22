@@ -12,7 +12,7 @@ interface AccessMember { id: string; name: string; email: string; role: string; 
 const TABS = [
   { label: 'Dashboard', href: '/bd', icon: LayoutDashboard },
   { label: 'Pipeline', href: '/bd/pipeline', icon: Kanban },
-  { label: 'Accounts', href: '/bd/accounts', icon: Building2 },
+  { label: 'Clients', href: '/bd/accounts', icon: Building2 },
   { label: 'Activities', href: '/bd/activities', icon: CalendarClock },
   { label: 'AI Strategy', href: '/bd/strategy', icon: Sparkles },
 ];
