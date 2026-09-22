@@ -4,7 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
 import { useEffect, useState } from 'react';
-import { Target, LayoutDashboard, Kanban, Building2, Sparkles, Shield, X, Loader2, Check, Lock } from 'lucide-react';
+import { Target, LayoutDashboard, Kanban, CalendarClock, Sparkles, Shield, X, Loader2, Check, Lock } from 'lucide-react';
 import clsx from 'clsx';
 
 interface AccessMember { id: string; name: string; email: string; role: string; bd_access: boolean; }
@@ -12,11 +12,10 @@ interface AccessMember { id: string; name: string; email: string; role: string; 
 const TABS = [
   { label: 'Dashboard', href: '/bd', icon: LayoutDashboard },
   { label: 'Pipeline', href: '/bd/pipeline', icon: Kanban },
-  { label: 'Accounts', href: '/bd/accounts', icon: Building2 },
+  { label: 'Activities', href: '/bd/activities', icon: CalendarClock },
   { label: 'AI Strategy', href: '/bd/strategy', icon: Sparkles },
 ];
-const initialsOf = (name?: string | null) =>
-  (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+const initialsOf = (name?: string | null) => (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
 export default function BDLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -32,9 +31,7 @@ export default function BDLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let alive = true;
-    api.bd.myAccess()
-      .then((r) => { if (alive) setAccess(!!r?.access); })
-      .catch(() => { if (alive) setAccess(false); });
+    api.bd.myAccess().then((r) => { if (alive) setAccess(!!r?.access); }).catch(() => { if (alive) setAccess(false); });
     return () => { alive = false; };
   }, []);
 

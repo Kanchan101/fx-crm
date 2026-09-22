@@ -4,11 +4,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
-import { Plus, X, AlertCircle, Trash2, Loader2, Building2 } from 'lucide-react';
+import { Plus, X, AlertCircle, Trash2, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 
 interface Opp {
-  id: string; client_id: string | null; title: string; stage: string; value: number;
+  id: string; client_id: string | null; prospect_id: string | null; title: string; stage: string; value: number;
   owner_id: string | null; owner_name: string | null; owner_color: string | null;
   client_name: string | null; is_prospect: boolean; client_tier: string | null; idle_days: number;
 }
@@ -86,14 +86,6 @@ export default function BDBoardPage() {
     if (!confirm('Delete this opportunity? This cannot be undone.')) return;
     try { await api.bd.opportunities.remove(String(id)); await fetchBoard(); }
     catch (err) { console.error(err); }
-  };
-
-  const convert = async (opp: Opp) => {
-    if (!confirm(`Save "${opp.client_name}" as an account? You'll then be able to add contacts and handover notes.`)) return;
-    try {
-      const r = await api.bd.opportunities.convert(String(opp.id));
-      if (r?.client_id) router.push(`/bd/accounts/${r.client_id}`);
-    } catch (err) { console.error(err); }
   };
 
   const openAdd = () => {
@@ -175,7 +167,11 @@ export default function BDBoardPage() {
                         {idle && <span className="absolute top-3 right-3 w-1.5 h-1.5 rounded-full bg-red-500" title={`${o.idle_days} days no movement`} />}
                         <p className="text-sm font-semibold text-gray-900 pr-3 leading-snug">{o.title}</p>
                         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                          <span className="text-[11px] font-medium text-gray-600 bg-gray-100 rounded px-1.5 py-0.5">{o.client_name || 'Unlinked'}</span>
+                          {o.is_prospect && o.prospect_id ? (
+                            <button onClick={() => router.push(`/bd/prospects/${o.prospect_id}`)} className="text-[11px] font-medium text-fx-700 bg-fx-50 hover:bg-fx-100 rounded px-1.5 py-0.5">{o.client_name || 'Unlinked'}</button>
+                          ) : (
+                            <span className="text-[11px] font-medium text-gray-600 bg-gray-100 rounded px-1.5 py-0.5">{o.client_name || 'Unlinked'}</span>
+                          )}
                           {o.is_prospect
                             ? <span className="text-[11px] font-medium text-amber-700 bg-amber-50 rounded px-1.5 py-0.5">Prospect</span>
                             : (o.client_tier && <span className="text-[11px] text-gray-400">{o.client_tier}</span>)}
@@ -203,12 +199,6 @@ export default function BDBoardPage() {
                             </button>
                           )}
                         </div>
-                        {o.is_prospect && (
-                          <button onClick={() => convert(o)}
-                            className="w-full mt-1.5 text-[11px] font-medium text-fx-600 hover:text-fx-700 border border-dashed border-fx-200 rounded-md py-1 flex items-center justify-center gap-1">
-                            <Building2 className="w-3 h-3" /> Save as account
-                          </button>
-                        )}
                       </div>
                     );
                   })}

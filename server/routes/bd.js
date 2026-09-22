@@ -11,7 +11,7 @@ const PROB = { Prospecting: 10, Qualified: 25, Proposal: 50, Negotiation: 75, Wo
 
 const OPP_SELECT = `
   SELECT o.*,
-    COALESCE(c.name, o.prospect_name) AS client_name,
+    COALESCE(c.name, p.name, o.prospect_name) AS client_name,
     (o.client_id IS NULL) AS is_prospect,
     c.tier    AS client_tier,
     c.vertical AS client_vertical,
@@ -20,6 +20,7 @@ const OPP_SELECT = `
     GREATEST(0, DATE_PART('day', NOW() - o.last_stage_at))::int AS idle_days
   FROM bd_opportunities o
   LEFT JOIN clients c ON c.id = o.client_id
+  LEFT JOIN bd_prospects p ON p.id = o.prospect_id
   LEFT JOIN team t    ON t.id = o.owner_id
 `;
 
@@ -113,11 +114,25 @@ router.post('/opportunities', async (req, res) => {
       return res.status(400).json({ error: 'Title and either a client or a new company name are required' });
     }
     const st = ALL_STAGES.includes(stage) ? stage : 'Prospecting';
+
+    // A "new company" is a Prospect that lives in BD (never in the clients table).
+    // Reuse an existing prospect of the same name, otherwise create one.
+    let prospectId = null;
+    if (!client_id) {
+      const nm = String(prospect_name || '').trim();
+      const found = await query('SELECT id FROM bd_prospects WHERE LOWER(name) = LOWER($1) LIMIT 1', [nm]);
+      if (found.rows.length) prospectId = found.rows[0].id;
+      else {
+        const np = await query('INSERT INTO bd_prospects (name, created_by) VALUES ($1, $2) RETURNING id', [nm, req.user.id]);
+        prospectId = np.rows[0].id;
+      }
+    }
+
     const { rows } = await query(
       `INSERT INTO bd_opportunities
-         (client_id, prospect_name, title, stage, value, owner_id, source, expected_close, next_step, created_by, last_stage_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW()) RETURNING id`,
-      [client_id || null, client_id ? null : String(prospect_name || '').trim(), title.trim(), st,
+         (client_id, prospect_id, prospect_name, title, stage, value, owner_id, source, expected_close, next_step, created_by, last_stage_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NOW()) RETURNING id`,
+      [client_id || null, prospectId, client_id ? null : String(prospect_name || '').trim(), title.trim(), st,
        value || 0, owner_id || req.user.id, source || null, expected_close || null, next_step || null, req.user.id]
     );
     logActivity('created', 'opportunity', rows[0].id, { title, stage: st }, req.user.id);
@@ -181,6 +196,7 @@ router.get('/accounts', async (req, res) => {
         MAX(o.updated_at) AS last_activity
        FROM clients c
        LEFT JOIN bd_opportunities o ON o.client_id = c.id
+       WHERE COALESCE(c.status, '') <> 'Prospect'
        GROUP BY c.id, c.name, c.vertical, c.tier
        ORDER BY open_value DESC, c.name`
     );
@@ -311,25 +327,135 @@ router.delete('/contacts/:contactId', async (req, res) => {
   } catch (err) { console.error('BD delete contact error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
-// Convert a prospect opportunity into a real account (client with status Prospect),
-// so it can hold contacts and handover notes. Links every opportunity that shared
-// the same prospect name to the new account.
-router.post('/opportunities/:id/convert', async (req, res) => {
+/* ═══════════════════════ PROSPECTS (BD-only companies, not clients) ═══════════════════════ */
+
+// One prospect: its details, opportunities, contacts.
+router.get('/prospects/:id', async (req, res) => {
   try {
-    const opp = await query('SELECT id, client_id, prospect_name FROM bd_opportunities WHERE id = $1', [req.params.id]);
-    if (!opp.rows.length) return res.status(404).json({ error: 'Not found' });
-    if (opp.rows[0].client_id) return res.json({ client_id: opp.rows[0].client_id });
-    const name = String(opp.rows[0].prospect_name || '').trim();
-    if (!name) return res.status(400).json({ error: 'This opportunity has no company name to convert' });
+    const pid = req.params.id;
+    const pRes = await query('SELECT * FROM bd_prospects WHERE id = $1', [pid]);
+    if (!pRes.rows.length) return res.status(404).json({ error: 'Prospect not found' });
+    const oppsRes = await query(OPP_SELECT + ' WHERE o.prospect_id = $1 ORDER BY o.value DESC NULLS LAST', [pid]);
+    const opps = oppsRes.rows;
+    const stats = {
+      openCount: opps.filter((o) => OPEN_STAGES.includes(o.stage)).length,
+      openValue: opps.filter((o) => OPEN_STAGES.includes(o.stage)).reduce((a, o) => a + Number(o.value || 0), 0),
+      wonCount: opps.filter((o) => o.stage === 'Won').length,
+    };
+    let contacts = [];
+    try {
+      const cs = await query(
+        `SELECT id, name, designation, email, phone, is_primary, COALESCE(authority,'') AS authority
+         FROM bd_prospect_contacts WHERE prospect_id = $1 ORDER BY is_primary DESC, name`, [pid]);
+      contacts = cs.rows;
+    } catch (e) { /* table missing */ }
+    res.json({ prospect: pRes.rows[0], opportunities: opps, contacts, stats });
+  } catch (err) { console.error('BD prospect detail error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+// Update prospect fields (name, sector).
+router.patch('/prospects/:id', async (req, res) => {
+  try {
+    const { name, sector } = req.body;
+    const sets = []; const params = []; let i = 1;
+    if (name !== undefined) { sets.push(`name = $${i++}`); params.push(String(name).trim()); }
+    if (sector !== undefined) { sets.push(`sector = $${i++}`); params.push(sector); }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+    sets.push('updated_at = NOW()'); params.push(req.params.id);
+    await query(`UPDATE bd_prospects SET ${sets.join(', ')} WHERE id = $${i}`, params);
+    res.json({ success: true });
+  } catch (err) { console.error('BD prospect update error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+// Save the prospect's handover notes.
+router.put('/prospects/:id/notes', async (req, res) => {
+  try {
+    await query('UPDATE bd_prospects SET notes = $1, updated_at = NOW() WHERE id = $2', [req.body.notes || '', req.params.id]);
+    res.json({ success: true });
+  } catch (err) { console.error('BD prospect notes error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+// Prospect contacts (people) — stored in BD, separate from client contacts.
+router.post('/prospects/:id/contacts', async (req, res) => {
+  try {
+    const { name, designation, email, phone, authority, is_primary } = req.body;
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'Contact name is required' });
+    if (is_primary === true) await query('UPDATE bd_prospect_contacts SET is_primary = false WHERE prospect_id = $1', [req.params.id]);
+    await query(
+      `INSERT INTO bd_prospect_contacts (prospect_id, name, designation, email, phone, authority, is_primary)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [req.params.id, name.trim(), designation || null, email || null, phone || null, authority || null, is_primary === true]
+    );
+    res.status(201).json({ success: true });
+  } catch (err) { console.error('BD prospect add contact error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+router.patch('/prospect-contacts/:contactId', async (req, res) => {
+  try {
+    const { name, designation, email, phone, authority, is_primary } = req.body;
+    if (is_primary === true) {
+      const c = await query('SELECT prospect_id FROM bd_prospect_contacts WHERE id = $1', [req.params.contactId]);
+      if (c.rows.length) await query('UPDATE bd_prospect_contacts SET is_primary = false WHERE prospect_id = $1', [c.rows[0].prospect_id]);
+    }
+    const map = { name, designation, email, phone, authority, is_primary };
+    const sets = []; const params = []; let i = 1;
+    for (const [k, v] of Object.entries(map)) { if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(v); } }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+    params.push(req.params.contactId);
+    await query(`UPDATE bd_prospect_contacts SET ${sets.join(', ')} WHERE id = $${i}`, params);
+    res.json({ success: true });
+  } catch (err) { console.error('BD prospect edit contact error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+router.delete('/prospect-contacts/:contactId', async (req, res) => {
+  try {
+    await query('DELETE FROM bd_prospect_contacts WHERE id = $1', [req.params.contactId]);
+    res.json({ success: true });
+  } catch (err) { console.error('BD prospect delete contact error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+// Onboard a prospect: they've come onboard, so they become a real Client.
+// Creates the client, moves contacts + notes + opportunities over, and marks the prospect onboarded.
+router.post('/prospects/:id/onboard', authorize('Super Admin', 'Account Manager'), async (req, res) => {
+  try {
+    const pRes = await query('SELECT * FROM bd_prospects WHERE id = $1', [req.params.id]);
+    if (!pRes.rows.length) return res.status(404).json({ error: 'Prospect not found' });
+    const p = pRes.rows[0];
+    if (p.onboarded_client_id) return res.json({ client_id: p.onboarded_client_id });
+
     const ins = await query(
-      `INSERT INTO clients (name, status, created_by) VALUES ($1, 'Prospect', $2) RETURNING id`,
-      [name, req.user.id]
+      `INSERT INTO clients (name, vertical, notes, created_by) VALUES ($1, $2, $3, $4) RETURNING id`,
+      [p.name, p.sector || null, p.notes || null, req.user.id]
     );
     const clientId = ins.rows[0].id;
-    await query('UPDATE bd_opportunities SET client_id = $1, prospect_name = NULL WHERE prospect_name = $2', [clientId, name]);
-    logActivity('converted', 'client', clientId, { from_prospect: name }, req.user.id);
+
+    // Move contacts into the shared client contacts table.
+    try {
+      await query(
+        `INSERT INTO client_spocs (client_id, name, designation, email, phone, is_primary, bd_authority)
+         SELECT $1, name, designation, email, phone, is_primary, authority
+         FROM bd_prospect_contacts WHERE prospect_id = $2`,
+        [clientId, req.params.id]
+      );
+    } catch (e) { console.warn('onboard contacts copy skipped:', e.message); }
+
+    // Move handover notes.
+    if (p.notes) {
+      try {
+        await query(
+          `INSERT INTO bd_account_notes (client_id, notes, updated_by, updated_at)
+           VALUES ($1,$2,$3,NOW()) ON CONFLICT (client_id) DO UPDATE SET notes = EXCLUDED.notes`,
+          [clientId, p.notes, req.user.id]
+        );
+      } catch (e) { console.warn('onboard notes copy skipped:', e.message); }
+    }
+
+    // Relink opportunities from the prospect to the new client.
+    await query('UPDATE bd_opportunities SET client_id = $1, prospect_id = NULL, prospect_name = NULL WHERE prospect_id = $2', [clientId, req.params.id]);
+    await query('UPDATE bd_prospects SET onboarded_client_id = $1, updated_at = NOW() WHERE id = $2', [clientId, req.params.id]);
+    logActivity('onboarded', 'client', clientId, { from_prospect: p.name }, req.user.id);
     res.status(201).json({ client_id: clientId });
-  } catch (err) { console.error('BD convert error:', err); res.status(500).json({ error: 'Server error' }); }
+  } catch (err) { console.error('BD onboard error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
 /* ═══════════════════════ AI STRATEGY BUILDER ═══════════════════════ */

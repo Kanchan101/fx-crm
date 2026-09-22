@@ -107,7 +107,6 @@ export const api = {
         apiFetch(`/api/bd/opportunities/${id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage, lost_reason }) }),
       update: (id: string, data: any) => apiFetch(`/api/bd/opportunities/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
       remove: (id: string) => apiFetch(`/api/bd/opportunities/${id}`, { method: 'DELETE' }),
-      convert: (id: string) => apiFetch<{ client_id: string }>(`/api/bd/opportunities/${id}/convert`, { method: 'POST' }),
     },
     accounts: {
       list: () => apiFetch('/api/bd/accounts'),
@@ -122,6 +121,15 @@ export const api = {
         apiFetch(`/api/bd/contacts/${contactId}`, { method: 'PATCH', body: JSON.stringify(data) }),
       deleteContact: (contactId: string) =>
         apiFetch(`/api/bd/contacts/${contactId}`, { method: 'DELETE' }),
+    },
+    prospects: {
+      get: (id: string) => apiFetch(`/api/bd/prospects/${id}`),
+      update: (id: string, data: any) => apiFetch(`/api/bd/prospects/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      saveNotes: (id: string, notes: string) => apiFetch(`/api/bd/prospects/${id}/notes`, { method: 'PUT', body: JSON.stringify({ notes }) }),
+      addContact: (id: string, data: any) => apiFetch(`/api/bd/prospects/${id}/contacts`, { method: 'POST', body: JSON.stringify(data) }),
+      updateContact: (contactId: string, data: any) => apiFetch(`/api/bd/prospect-contacts/${contactId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      deleteContact: (contactId: string) => apiFetch(`/api/bd/prospect-contacts/${contactId}`, { method: 'DELETE' }),
+      onboard: (id: string) => apiFetch<{ client_id: string }>(`/api/bd/prospects/${id}/onboard`, { method: 'POST' }),
     },
     strategy: (data: { target_name: string; sector?: string; notes?: string }) =>
       apiFetch('/api/bd/strategy', { method: 'POST', body: JSON.stringify(data) }),
