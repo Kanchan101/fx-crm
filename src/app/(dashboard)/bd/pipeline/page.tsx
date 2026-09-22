@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
-import { Plus, X, AlertCircle, Trash2, Loader2 } from 'lucide-react';
+import { Plus, X, AlertCircle, Trash2, Loader2, Building2 } from 'lucide-react';
 import clsx from 'clsx';
 
 interface Opp {
@@ -37,6 +38,7 @@ const emptyForm = {
 
 export default function BDBoardPage() {
   const { user, isRole } = useAuth();
+  const router = useRouter();
   const canManage = isRole('Super Admin', 'Account Manager');
 
   const [opps, setOpps] = useState<Opp[]>([]);
@@ -84,6 +86,14 @@ export default function BDBoardPage() {
     if (!confirm('Delete this opportunity? This cannot be undone.')) return;
     try { await api.bd.opportunities.remove(String(id)); await fetchBoard(); }
     catch (err) { console.error(err); }
+  };
+
+  const convert = async (opp: Opp) => {
+    if (!confirm(`Save "${opp.client_name}" as an account? You'll then be able to add contacts and handover notes.`)) return;
+    try {
+      const r = await api.bd.opportunities.convert(String(opp.id));
+      if (r?.client_id) router.push(`/bd/accounts/${r.client_id}`);
+    } catch (err) { console.error(err); }
   };
 
   const openAdd = () => {
@@ -193,6 +203,12 @@ export default function BDBoardPage() {
                             </button>
                           )}
                         </div>
+                        {o.is_prospect && (
+                          <button onClick={() => convert(o)}
+                            className="w-full mt-1.5 text-[11px] font-medium text-fx-600 hover:text-fx-700 border border-dashed border-fx-200 rounded-md py-1 flex items-center justify-center gap-1">
+                            <Building2 className="w-3 h-3" /> Save as account
+                          </button>
+                        )}
                       </div>
                     );
                   })}

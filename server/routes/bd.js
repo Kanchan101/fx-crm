@@ -211,7 +211,8 @@ router.get('/accounts/:clientId', async (req, res) => {
     let contacts = [];
     try {
       const cs = await query(
-        `SELECT name, designation, email, is_primary FROM client_spocs WHERE client_id = $1 ORDER BY is_primary DESC, name`, [cid]
+        `SELECT id, name, designation, email, phone, is_primary, COALESCE(bd_authority, '') AS authority
+         FROM client_spocs WHERE client_id = $1 ORDER BY is_primary DESC, name`, [cid]
       );
       contacts = cs.rows;
     } catch (e) { /* client_spocs shape differs */ }
@@ -230,7 +231,17 @@ router.get('/accounts/:clientId', async (req, res) => {
       timeline = tl.rows;
     } catch (e) { /* activity_log shape differs — empty timeline */ }
 
-    res.json({ account: clientRes.rows[0], opportunities: opps, contacts, stats, timeline });
+    let account_notes = null;
+    try {
+      const nres = await query(
+        `SELECT n.notes, n.updated_at, t.name AS updated_by_name
+         FROM bd_account_notes n LEFT JOIN team t ON t.id = n.updated_by
+         WHERE n.client_id = $1`, [cid]
+      );
+      account_notes = nres.rows[0] || null;
+    } catch (e) { /* notes table missing */ }
+
+    res.json({ account: clientRes.rows[0], opportunities: opps, contacts, stats, timeline, account_notes });
   } catch (err) { console.error('BD account detail error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
@@ -242,6 +253,83 @@ router.post('/accounts/:clientId/note', async (req, res) => {
     logActivity('note', 'client', req.params.clientId, { text: String(text).trim() }, req.user.id);
     res.status(201).json({ success: true });
   } catch (err) { console.error('BD account note error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+// Save (upsert) the running handover notes for an account.
+router.put('/accounts/:clientId/notes', async (req, res) => {
+  try {
+    const { notes } = req.body;
+    await query(
+      `INSERT INTO bd_account_notes (client_id, notes, updated_by, updated_at)
+       VALUES ($1,$2,$3,NOW())
+       ON CONFLICT (client_id) DO UPDATE
+         SET notes = EXCLUDED.notes, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+      [req.params.clientId, notes || '', req.user.id]
+    );
+    res.json({ success: true });
+  } catch (err) { console.error('BD save notes error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+/* ═══════════════════════ CONTACTS ═══════════════════════ */
+
+router.post('/accounts/:clientId/contacts', async (req, res) => {
+  try {
+    const { name, designation, email, phone, authority, is_primary } = req.body;
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'Contact name is required' });
+    if (is_primary === true) await query('UPDATE client_spocs SET is_primary = false WHERE client_id = $1', [req.params.clientId]);
+    const { rows } = await query(
+      `INSERT INTO client_spocs (client_id, name, designation, email, phone, is_primary, bd_authority)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [req.params.clientId, name.trim(), designation || null, email || null, phone || null, is_primary === true, authority || null]
+    );
+    logActivity('contact_added', 'client', req.params.clientId, { name: name.trim() }, req.user.id);
+    res.status(201).json({ id: rows[0].id });
+  } catch (err) { console.error('BD add contact error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+router.patch('/contacts/:contactId', async (req, res) => {
+  try {
+    const { name, designation, email, phone, authority, is_primary } = req.body;
+    if (is_primary === true) {
+      const c = await query('SELECT client_id FROM client_spocs WHERE id = $1', [req.params.contactId]);
+      if (c.rows.length) await query('UPDATE client_spocs SET is_primary = false WHERE client_id = $1', [c.rows[0].client_id]);
+    }
+    const map = { name, designation, email, phone, bd_authority: authority, is_primary };
+    const sets = []; const params = []; let i = 1;
+    for (const [k, v] of Object.entries(map)) { if (v !== undefined) { sets.push(`${k} = $${i++}`); params.push(v); } }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+    params.push(req.params.contactId);
+    await query(`UPDATE client_spocs SET ${sets.join(', ')} WHERE id = $${i}`, params);
+    res.json({ success: true });
+  } catch (err) { console.error('BD update contact error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+router.delete('/contacts/:contactId', async (req, res) => {
+  try {
+    await query('DELETE FROM client_spocs WHERE id = $1', [req.params.contactId]);
+    res.json({ success: true });
+  } catch (err) { console.error('BD delete contact error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+// Convert a prospect opportunity into a real account (client with status Prospect),
+// so it can hold contacts and handover notes. Links every opportunity that shared
+// the same prospect name to the new account.
+router.post('/opportunities/:id/convert', async (req, res) => {
+  try {
+    const opp = await query('SELECT id, client_id, prospect_name FROM bd_opportunities WHERE id = $1', [req.params.id]);
+    if (!opp.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (opp.rows[0].client_id) return res.json({ client_id: opp.rows[0].client_id });
+    const name = String(opp.rows[0].prospect_name || '').trim();
+    if (!name) return res.status(400).json({ error: 'This opportunity has no company name to convert' });
+    const ins = await query(
+      `INSERT INTO clients (name, status, created_by) VALUES ($1, 'Prospect', $2) RETURNING id`,
+      [name, req.user.id]
+    );
+    const clientId = ins.rows[0].id;
+    await query('UPDATE bd_opportunities SET client_id = $1, prospect_name = NULL WHERE prospect_name = $2', [clientId, name]);
+    logActivity('converted', 'client', clientId, { from_prospect: name }, req.user.id);
+    res.status(201).json({ client_id: clientId });
+  } catch (err) { console.error('BD convert error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
 /* ═══════════════════════ AI STRATEGY BUILDER ═══════════════════════ */
