@@ -5,33 +5,31 @@ import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
 import {
   Target, Plus, X, TrendingUp, Trophy, Percent, IndianRupee,
-  AlertCircle, Trash2, Loader2,
+  AlertCircle, Trash2, Loader2, Shield, Lock, Check,
 } from 'lucide-react';
 import clsx from 'clsx';
 
 interface Opp {
-  id: number;
-  client_id: number;
+  id: string;
+  client_id: string | null;
   title: string;
   stage: string;
   value: number;
-  owner_id: number | null;
+  owner_id: string | null;
   owner_name: string | null;
   owner_color: string | null;
   client_name: string | null;
+  is_prospect: boolean;
   client_tier: string | null;
-  client_vertical: string | null;
   idle_days: number;
-  expected_close: string | null;
-  source: string | null;
 }
 interface Overview {
   openValue: number; weighted: number; openCount: number;
   wonCount: number; wonValue: number; winRate: number; placedRevenue: number;
-  stages: { stage: string; count: number; value: number }[];
 }
-interface Client { id: number; name: string; tier?: string; }
-interface TeamMember { id: number; name: string; role: string; }
+interface Client { id: string; name: string; }
+interface TeamMember { id: string; name: string; role: string; }
+interface AccessMember { id: string; name: string; email: string; role: string; bd_access: boolean; }
 
 const BOARD_STAGES = ['Prospecting', 'Qualified', 'Proposal', 'Negotiation', 'Won'];
 const MOVE_STAGES = [...BOARD_STAGES, 'Lost'];
@@ -50,25 +48,34 @@ const initialsOf = (name?: string | null) =>
   (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 
 const emptyForm = {
-  client_id: '', title: '', stage: 'Prospecting', valueL: '', owner_id: '', expected_close: '',
+  mode: 'existing' as 'existing' | 'new',
+  client_id: '', prospect_name: '', title: '', stage: 'Prospecting', valueL: '', owner_id: '', expected_close: '',
 };
 
 export default function BDPipelinePage() {
   const { user, isRole } = useAuth();
   const canManage = isRole('Super Admin', 'Account Manager');
+  const isAdmin = isRole('Super Admin');
 
   const [opps, setOpps] = useState<Opp[]>([]);
   const [overview, setOverview] = useState<Overview | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
+  const [denied, setDenied] = useState(false);
   const [period, setPeriod] = useState<'week' | 'month' | 'quarter'>('month');
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [movingId, setMovingId] = useState<number | null>(null);
+  const [movingId, setMovingId] = useState<string | null>(null);
+
+  // Access management (Super Admin)
+  const [accessOpen, setAccessOpen] = useState(false);
+  const [members, setMembers] = useState<AccessMember[]>([]);
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const fetchBoard = useCallback(async () => {
     try {
@@ -80,8 +87,11 @@ export default function BDPipelinePage() {
       ]);
       setOpps(oppData.opportunities || []);
       setOverview(ovData);
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+      setDenied(false);
+    } catch (err: any) {
+      if (/access|permission/i.test(err?.message || '')) setDenied(true);
+      else console.error(err);
+    } finally { setLoading(false); }
   }, [search, period]);
 
   const fetchMeta = useCallback(async () => {
@@ -89,24 +99,42 @@ export default function BDPipelinePage() {
       const [c, t] = await Promise.all([api.clients.list(''), api.team.list()]);
       setClients(c.clients || []);
       setTeam((t.team || []).filter((m: TeamMember & { is_active?: boolean }) => m.is_active !== false));
-    } catch (err) { console.error(err); }
+    } catch (err) { /* ignore — not fatal for the board */ }
   }, []);
 
   useEffect(() => { fetchBoard(); }, [fetchBoard]);
   useEffect(() => { fetchMeta(); }, [fetchMeta]);
 
+  // Load member list when the access panel opens
+  useEffect(() => {
+    if (!accessOpen) return;
+    setAccessLoading(true);
+    api.bd.access.list()
+      .then((d: any) => setMembers(d.members || []))
+      .catch(() => {})
+      .finally(() => setAccessLoading(false));
+  }, [accessOpen]);
+
+  const toggleAccess = async (m: AccessMember) => {
+    if (m.role === 'Super Admin') return; // admins always have access
+    const next = !m.bd_access;
+    setBusyId(m.id);
+    setMembers((prev) => prev.map((x) => (x.id === m.id ? { ...x, bd_access: next } : x)));
+    try { await api.bd.access.set(m.id, next); }
+    catch { setMembers((prev) => prev.map((x) => (x.id === m.id ? { ...x, bd_access: !next } : x))); }
+    finally { setBusyId(null); }
+  };
+
   const moveStage = async (opp: Opp, stage: string) => {
     if (stage === opp.stage) return;
     setMovingId(opp.id);
-    setOpps((prev) => prev.map((o) => (o.id === opp.id ? { ...o, stage } : o))); // optimistic
-    try {
-      await api.bd.opportunities.updateStage(String(opp.id), stage);
-      await fetchBoard();
-    } catch (err) { console.error(err); await fetchBoard(); }
+    setOpps((prev) => prev.map((o) => (o.id === opp.id ? { ...o, stage } : o)));
+    try { await api.bd.opportunities.updateStage(String(opp.id), stage); await fetchBoard(); }
+    catch (err) { console.error(err); await fetchBoard(); }
     finally { setMovingId(null); }
   };
 
-  const removeOpp = async (id: number) => {
+  const removeOpp = async (id: string) => {
     if (!confirm('Delete this opportunity? This cannot be undone.')) return;
     try { await api.bd.opportunities.remove(String(id)); await fetchBoard(); }
     catch (err) { console.error(err); }
@@ -119,15 +147,18 @@ export default function BDPipelinePage() {
   };
 
   const saveOpp = async () => {
-    if (!form.client_id || !form.title.trim()) { setError('Client and title are required.'); return; }
+    if (!form.title.trim()) { setError('A title is required.'); return; }
+    if (form.mode === 'existing' && !form.client_id) { setError('Pick a client, or switch to “New company”.'); return; }
+    if (form.mode === 'new' && !form.prospect_name.trim()) { setError('Enter the new company name.'); return; }
     setSaving(true); setError('');
     try {
       await api.bd.opportunities.create({
-        client_id: Number(form.client_id),
+        client_id: form.mode === 'existing' ? form.client_id : undefined,
+        prospect_name: form.mode === 'new' ? form.prospect_name.trim() : undefined,
         title: form.title.trim(),
         stage: form.stage,
         value: form.valueL ? Math.round(parseFloat(form.valueL) * 1e5) : 0,
-        owner_id: form.owner_id ? Number(form.owner_id) : undefined,
+        owner_id: form.owner_id || undefined,
         expected_close: form.expected_close || undefined,
       });
       setShowModal(false);
@@ -138,6 +169,18 @@ export default function BDPipelinePage() {
 
   const byStage = (s: string) => opps.filter((o) => o.stage === s);
   const colValue = (s: string) => byStage(s).reduce((a, o) => a + (Number(o.value) || 0), 0);
+
+  if (denied) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
+          <Lock className="w-6 h-6 text-gray-400" />
+        </div>
+        <h2 className="text-lg font-semibold text-gray-900">BD Pipeline is restricted</h2>
+        <p className="text-sm text-gray-500 mt-1 max-w-sm">You don’t have access to this area yet. Ask a Super Admin to enable BD Pipeline access for your account.</p>
+      </div>
+    );
+  }
 
   const kpis = [
     { label: 'Open pipeline', value: overview ? fmtINR(overview.openValue) : '—', icon: TrendingUp, tint: 'bg-fx-50 text-fx-600' },
@@ -154,7 +197,7 @@ export default function BDPipelinePage() {
           <h1 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
             <Target className="w-5 h-5 text-fx-600" /> BD Pipeline
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">Opportunities to win and grow client accounts — synced with the whole team.</p>
+          <p className="text-sm text-gray-500 mt-0.5">Opportunities to win and grow client accounts — synced with your BD team.</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex bg-gray-100 rounded-lg p-0.5">
@@ -166,6 +209,12 @@ export default function BDPipelinePage() {
               </button>
             ))}
           </div>
+          {isAdmin && (
+            <button onClick={() => setAccessOpen(true)}
+              className="flex items-center gap-1.5 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg">
+              <Shield className="w-4 h-4" /> Manage access
+            </button>
+          )}
           <button onClick={openAdd}
             className="flex items-center gap-1.5 bg-fx-600 hover:bg-fx-700 text-white text-sm font-medium px-3.5 py-2 rounded-lg transition-colors">
             <Plus className="w-4 h-4" /> New opportunity
@@ -192,7 +241,7 @@ export default function BDPipelinePage() {
       <div className="flex items-center gap-2">
         <input
           value={search} onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search opportunities or clients…"
+          placeholder="Search opportunities or companies…"
           className="w-full sm:w-72 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-fx-500/30 focus:border-fx-500"
         />
         {overview && (
@@ -239,11 +288,13 @@ export default function BDPipelinePage() {
                           idle && 'border-amber-300')}>
                         {idle && <span className="absolute top-3 right-3 w-1.5 h-1.5 rounded-full bg-red-500" title={`${o.idle_days} days no movement`} />}
                         <p className="text-sm font-semibold text-gray-900 pr-3 leading-snug">{o.title}</p>
-                        <div className="flex items-center gap-1.5 mt-1.5">
+                        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                           <span className="text-[11px] font-medium text-gray-600 bg-gray-100 rounded px-1.5 py-0.5">
                             {o.client_name || 'Unlinked'}
                           </span>
-                          {o.client_tier && <span className="text-[11px] text-gray-400">{o.client_tier}</span>}
+                          {o.is_prospect
+                            ? <span className="text-[11px] font-medium text-amber-700 bg-amber-50 rounded px-1.5 py-0.5">Prospect</span>
+                            : (o.client_tier && <span className="text-[11px] text-gray-400">{o.client_tier}</span>)}
                         </div>
                         <div className="flex items-center justify-between mt-2.5">
                           <span className="text-sm font-bold text-gray-900">{fmtINR(o.value)}</span>
@@ -301,15 +352,39 @@ export default function BDPipelinePage() {
                   <AlertCircle className="w-4 h-4 shrink-0" /> {error}
                 </div>
               )}
-              <Field label="Account (client)">
-                <select value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })} className={inputCls}>
-                  <option value="">Select a client…</option>
-                  {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </Field>
+
+              {/* Company: existing client OR new prospect */}
+              <div>
+                <span className="text-xs font-medium text-gray-600 mb-1 block">Company</span>
+                <div className="flex bg-gray-100 rounded-lg p-0.5 mb-2">
+                  <button type="button" onClick={() => setForm({ ...form, mode: 'existing' })}
+                    className={clsx('flex-1 py-1.5 text-xs font-medium rounded-md',
+                      form.mode === 'existing' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500')}>
+                    Existing client
+                  </button>
+                  <button type="button" onClick={() => setForm({ ...form, mode: 'new' })}
+                    className={clsx('flex-1 py-1.5 text-xs font-medium rounded-md',
+                      form.mode === 'new' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500')}>
+                    New company
+                  </button>
+                </div>
+                {form.mode === 'existing' ? (
+                  <select value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })} className={inputCls}>
+                    <option value="">Select a client…</option>
+                    {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                ) : (
+                  <>
+                    <input value={form.prospect_name} onChange={(e) => setForm({ ...form, prospect_name: e.target.value })}
+                      placeholder="e.g. Sunridge Motors" className={inputCls} />
+                    <p className="text-[11px] text-gray-400 mt-1">Tracked as a prospect in BD until you win it.</p>
+                  </>
+                )}
+              </div>
+
               <Field label="Opportunity / mandate">
                 <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })}
-                  placeholder="e.g. Core banking engineering pod — 8 roles" className={inputCls} />
+                  placeholder="e.g. EV powertrain engineers — 40 roles" className={inputCls} />
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Stage">
@@ -340,6 +415,54 @@ export default function BDPipelinePage() {
                   {saving && <Loader2 className="w-4 h-4 animate-spin" />} Save opportunity
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manage access modal (Super Admin) */}
+      {accessOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setAccessOpen(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 pt-5 pb-1">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <Shield className="w-4 h-4 text-fx-600" /> BD Pipeline access
+              </h3>
+              <button onClick={() => setAccessOpen(false)} className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="px-5 text-xs text-gray-500">Choose who can see and use the BD Pipeline. Super Admins always have access.</p>
+            <div className="px-5 py-4 space-y-1.5">
+              {accessLoading ? (
+                <div className="flex items-center justify-center py-10 text-gray-400"><Loader2 className="w-5 h-5 animate-spin" /></div>
+              ) : members.map((m) => {
+                const admin = m.role === 'Super Admin';
+                const on = admin || m.bd_access;
+                return (
+                  <div key={m.id} className="flex items-center gap-3 py-2">
+                    <div className="w-8 h-8 rounded-full bg-fx-100 text-fx-700 flex items-center justify-center text-xs font-semibold shrink-0">
+                      {initialsOf(m.name)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">{m.name}</p>
+                      <p className="text-[11px] text-gray-400 truncate">{m.role}</p>
+                    </div>
+                    {admin ? (
+                      <span className="text-[11px] font-medium text-emerald-600 bg-emerald-50 rounded px-2 py-1">Always on</span>
+                    ) : (
+                      <button onClick={() => toggleAccess(m)} disabled={busyId === m.id}
+                        className={clsx('relative w-11 h-6 rounded-full transition-colors shrink-0',
+                          on ? 'bg-fx-600' : 'bg-gray-300', busyId === m.id && 'opacity-60')}>
+                        <span className={clsx('absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform flex items-center justify-center',
+                          on && 'translate-x-5')}>
+                          {on && <Check className="w-3 h-3 text-fx-600" />}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

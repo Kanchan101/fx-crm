@@ -93,6 +93,12 @@ export const api = {
   },
   bd: {
     overview: (params?: string) => apiFetch(`/api/bd/overview${params ? `?${params}` : ''}`),
+    myAccess: () => apiFetch<{ access: boolean }>('/api/bd/my-access'),
+    access: {
+      list: () => apiFetch('/api/bd/access'),
+      set: (teamId: string, bd_access: boolean) =>
+        apiFetch(`/api/bd/access/${teamId}`, { method: 'PATCH', body: JSON.stringify({ bd_access }) }),
+    },
     opportunities: {
       list: (params?: string) => apiFetch(`/api/bd/opportunities${params ? `?${params}` : ''}`),
       get: (id: string) => apiFetch(`/api/bd/opportunities/${id}`),

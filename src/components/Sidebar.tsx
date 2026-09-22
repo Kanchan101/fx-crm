@@ -2,19 +2,20 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { useContext } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { SidebarContext } from '@/app/(dashboard)/layout';
+import { api } from '@/lib/api';
 import {
   LayoutDashboard, Building2, Users, Kanban, Calendar,
   BarChart3, UserCog, LogOut, ChevronLeft, Briefcase, X, Target,
 } from 'lucide-react';
 import clsx from 'clsx';
 
-interface NavItem { label: string; href: string; icon: React.ElementType; roles?: string[]; }
+interface NavItem { label: string; href: string; icon: React.ElementType; roles?: string[]; gated?: 'bd'; }
 
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { label: 'BD Pipeline', href: '/bd', icon: Target },
+  { label: 'BD Pipeline', href: '/bd', icon: Target, gated: 'bd' },
   { label: 'Requirements', href: '/requirements', icon: Briefcase },
   { label: 'Candidates', href: '/candidates', icon: Users },
   { label: 'Clients', href: '/clients', icon: Building2 },
@@ -28,6 +29,13 @@ export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const [bdAccess, setBdAccess] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api.bd.myAccess().then((r) => { if (alive) setBdAccess(!!r?.access); }).catch(() => {});
+    return () => { alive = false; };
+  }, [user?.id]);
 
   let collapsed = false;
   let setCollapsed = (v: boolean) => {};
@@ -48,7 +56,11 @@ export default function Sidebar() {
     setMobileOpen(false);
   };
 
-  const filteredNav = NAV_ITEMS.filter(item => !item.roles || (user && item.roles.includes(user.role)));
+  const filteredNav = NAV_ITEMS.filter((item) => {
+    if (item.roles && !(user && item.roles.includes(user.role))) return false;
+    if (item.gated === 'bd' && !bdAccess) return false;
+    return true;
+  });
   const initials = user?.name?.split(' ').map((w: string) => w[0]).join('').substring(0, 2).toUpperCase();
 
   return (

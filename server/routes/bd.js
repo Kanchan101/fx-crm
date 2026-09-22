@@ -9,10 +9,11 @@ const OPEN_STAGES = ['Prospecting', 'Qualified', 'Proposal', 'Negotiation'];
 const ALL_STAGES = [...OPEN_STAGES, 'Won', 'Lost'];
 const PROB = { Prospecting: 10, Qualified: 25, Proposal: 50, Negotiation: 75, Won: 100, Lost: 0 };
 
-// Select an opportunity joined to its client + owner, with a computed idle-days.
+// An opportunity's "account" is either a real client OR a typed-in prospect.
 const OPP_SELECT = `
   SELECT o.*,
-    c.name    AS client_name,
+    COALESCE(c.name, o.prospect_name) AS client_name,
+    (o.client_id IS NULL) AS is_prospect,
     c.tier    AS client_tier,
     c.vertical AS client_vertical,
     t.name    AS owner_name,
@@ -23,19 +24,79 @@ const OPP_SELECT = `
   LEFT JOIN team t    ON t.id = o.owner_id
 `;
 
-function logActivity(entityType, entityId, action, details, userId) {
-  // activity_log already exists in the CRM — reuse it for the BD timeline.
+function logActivity(action, entityId, details, userId) {
+  // Reuse the CRM's activity_log (columns: user_id, action, entity_type, entity_id, details).
   query(
-    `INSERT INTO activity_log (entity_type, entity_id, action, details, performed_by)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [entityType, entityId, action, JSON.stringify(details || {}), userId || null]
+    `INSERT INTO activity_log (user_id, action, entity_type, entity_id, details)
+     VALUES ($1, $2, 'opportunity', $3, $4)`,
+    [userId || null, action, entityId, JSON.stringify(details || {})]
   ).catch((e) => console.warn('activity_log insert skipped:', e.message));
 }
+
+/* ═══════════════════════ ACCESS ═══════════════════════ */
+// This endpoint is intentionally BEFORE the access guard so any signed-in
+// user can ask whether they personally have BD access (drives the nav link).
+router.get('/my-access', authenticate, async (req, res) => {
+  try {
+    if (req.user.role === 'Super Admin') return res.json({ access: true });
+    const { rows } = await query('SELECT role, bd_access FROM team WHERE id = $1', [req.user.id]);
+    const ok = rows.length && (rows[0].role === 'Super Admin' || rows[0].bd_access === true);
+    res.json({ access: !!ok });
+  } catch (err) {
+    res.json({ access: false });
+  }
+});
+
+// Gate for everything below: Super Admin, or a team member the admin enabled.
+async function requireBdAccess(req, res, next) {
+  try {
+    if (req.user.role === 'Super Admin') return next();
+    const { rows } = await query('SELECT role, bd_access FROM team WHERE id = $1', [req.user.id]);
+    if (rows.length && (rows[0].role === 'Super Admin' || rows[0].bd_access === true)) return next();
+    return res.status(403).json({ error: 'No BD access' });
+  } catch (err) {
+    console.error('BD access check error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+router.use(authenticate, requireBdAccess);
+
+// Super-Admin-only: list team members with their BD access flag.
+router.get('/access', (req, res, next) => {
+  if (req.user.role !== 'Super Admin') return res.status(403).json({ error: 'Super Admin only' });
+  next();
+}, async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT id, name, email, role, COALESCE(bd_access, false) AS bd_access
+       FROM team WHERE is_active = true ORDER BY name`
+    );
+    res.json({ members: rows });
+  } catch (err) {
+    console.error('BD access list error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Super-Admin-only: grant / revoke a team member's BD access.
+router.patch('/access/:teamId', (req, res, next) => {
+  if (req.user.role !== 'Super Admin') return res.status(403).json({ error: 'Super Admin only' });
+  next();
+}, async (req, res) => {
+  try {
+    const { bd_access } = req.body;
+    await query('UPDATE team SET bd_access = $1 WHERE id = $2', [bd_access === true, req.params.teamId]);
+    res.json({ success: true, bd_access: bd_access === true });
+  } catch (err) {
+    console.error('BD access update error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 /* ═══════════════════════ OPPORTUNITIES ═══════════════════════ */
 
 // GET /api/bd/opportunities?stage=&owner_id=&client_id=&search=
-router.get('/opportunities', authenticate, async (req, res) => {
+router.get('/opportunities', async (req, res) => {
   try {
     const { stage, owner_id, client_id, search } = req.query;
     let sql = OPP_SELECT + ' WHERE 1=1';
@@ -45,7 +106,7 @@ router.get('/opportunities', authenticate, async (req, res) => {
     if (owner_id) { sql += ` AND o.owner_id = $${i++}`; params.push(owner_id); }
     if (client_id) { sql += ` AND o.client_id = $${i++}`; params.push(client_id); }
     if (search) {
-      sql += ` AND (LOWER(o.title) LIKE $${i} OR LOWER(c.name) LIKE $${i})`;
+      sql += ` AND (LOWER(o.title) LIKE $${i} OR LOWER(COALESCE(c.name, o.prospect_name, '')) LIKE $${i})`;
       params.push(`%${String(search).toLowerCase()}%`); i++;
     }
     sql += ' ORDER BY o.value DESC NULLS LAST, o.updated_at DESC';
@@ -58,38 +119,44 @@ router.get('/opportunities', authenticate, async (req, res) => {
 });
 
 // GET /api/bd/opportunities/:id  (detail + recent timeline)
-router.get('/opportunities/:id', authenticate, async (req, res) => {
+router.get('/opportunities/:id', async (req, res) => {
   try {
     const { rows } = await query(OPP_SELECT + ' WHERE o.id = $1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
-    const timeline = await query(
-      `SELECT a.*, t.name AS performed_by_name
-       FROM activity_log a LEFT JOIN team t ON t.id = a.performed_by
-       WHERE a.entity_type = 'opportunity' AND a.entity_id = $1
-       ORDER BY a.performed_at DESC LIMIT 30`,
-      [req.params.id]
-    );
-    res.json({ opportunity: rows[0], timeline: timeline.rows });
+    let timeline = [];
+    try {
+      const tl = await query(
+        `SELECT a.*, t.name AS user_name
+         FROM activity_log a LEFT JOIN team t ON t.id = a.user_id
+         WHERE a.entity_type = 'opportunity' AND a.entity_id = $1
+         ORDER BY a.created_at DESC LIMIT 30`,
+        [req.params.id]
+      );
+      timeline = tl.rows;
+    } catch (e) { /* timestamp/column shape differs — return empty timeline */ }
+    res.json({ opportunity: rows[0], timeline });
   } catch (err) {
     console.error('BD get opportunity error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST /api/bd/opportunities
-router.post('/opportunities', authenticate, async (req, res) => {
+// POST /api/bd/opportunities   (existing client OR new prospect)
+router.post('/opportunities', async (req, res) => {
   try {
-    const { client_id, title, stage, value, owner_id, source, expected_close, next_step } = req.body;
-    if (!client_id || !title) return res.status(400).json({ error: 'Client and title are required' });
+    const { client_id, prospect_name, title, stage, value, owner_id, source, expected_close, next_step } = req.body;
+    if (!title || (!client_id && !prospect_name)) {
+      return res.status(400).json({ error: 'Title and either a client or a new company name are required' });
+    }
     const st = ALL_STAGES.includes(stage) ? stage : 'Prospecting';
     const { rows } = await query(
       `INSERT INTO bd_opportunities
-         (client_id, title, stage, value, owner_id, source, expected_close, next_step, created_by, last_stage_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, NOW()) RETURNING id`,
-      [client_id, title.trim(), st, value || 0, owner_id || req.user.id, source || null,
-       expected_close || null, next_step || null, req.user.id]
+         (client_id, prospect_name, title, stage, value, owner_id, source, expected_close, next_step, created_by, last_stage_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW()) RETURNING id`,
+      [client_id || null, client_id ? null : (prospect_name || null).toString().trim(), title.trim(), st,
+       value || 0, owner_id || req.user.id, source || null, expected_close || null, next_step || null, req.user.id]
     );
-    logActivity('opportunity', rows[0].id, 'created', { title, stage: st }, req.user.id);
+    logActivity('created', rows[0].id, { title, stage: st }, req.user.id);
     const full = await query(OPP_SELECT + ' WHERE o.id = $1', [rows[0].id]);
     res.status(201).json({ opportunity: full.rows[0] });
   } catch (err) {
@@ -99,7 +166,7 @@ router.post('/opportunities', authenticate, async (req, res) => {
 });
 
 // PATCH /api/bd/opportunities/:id/stage   { stage, lost_reason? }
-router.patch('/opportunities/:id/stage', authenticate, async (req, res) => {
+router.patch('/opportunities/:id/stage', async (req, res) => {
   try {
     const { stage, lost_reason } = req.body;
     if (!ALL_STAGES.includes(stage)) return res.status(400).json({ error: 'Invalid stage' });
@@ -111,8 +178,7 @@ router.patch('/opportunities/:id/stage', authenticate, async (req, res) => {
        WHERE id = $3`,
       [stage, stage === 'Lost' ? (lost_reason || null) : null, req.params.id]
     );
-    logActivity('opportunity', req.params.id, 'stage_changed',
-      { from: prev.rows[0].stage, to: stage }, req.user.id);
+    logActivity('stage_changed', req.params.id, { from: prev.rows[0].stage, to: stage }, req.user.id);
     const full = await query(OPP_SELECT + ' WHERE o.id = $1', [req.params.id]);
     res.json({ opportunity: full.rows[0] });
   } catch (err) {
@@ -122,9 +188,9 @@ router.patch('/opportunities/:id/stage', authenticate, async (req, res) => {
 });
 
 // PATCH /api/bd/opportunities/:id   (edit fields)
-router.patch('/opportunities/:id', authenticate, async (req, res) => {
+router.patch('/opportunities/:id', async (req, res) => {
   try {
-    const allowed = ['title', 'value', 'owner_id', 'source', 'expected_close', 'next_step', 'notes', 'client_id'];
+    const allowed = ['title', 'value', 'owner_id', 'source', 'expected_close', 'next_step', 'notes', 'client_id', 'prospect_name'];
     const sets = [];
     const params = [];
     let i = 1;
@@ -145,7 +211,7 @@ router.patch('/opportunities/:id', authenticate, async (req, res) => {
 });
 
 // DELETE /api/bd/opportunities/:id   (managers only)
-router.delete('/opportunities/:id', authenticate, authorize('Super Admin', 'Account Manager'), async (req, res) => {
+router.delete('/opportunities/:id', authorize('Super Admin', 'Account Manager'), async (req, res) => {
   try {
     await query('DELETE FROM bd_opportunities WHERE id = $1', [req.params.id]);
     res.json({ success: true });
@@ -157,15 +223,14 @@ router.delete('/opportunities/:id', authenticate, authorize('Super Admin', 'Acco
 
 /* ═══════════════════════ TASKS ═══════════════════════ */
 
-// GET /api/bd/tasks?owner_id=&done=
-router.get('/tasks', authenticate, async (req, res) => {
+router.get('/tasks', async (req, res) => {
   try {
     const { owner_id, done } = req.query;
     let sql = `
       SELECT bt.*,
         t.name AS owner_name, t.avatar_color AS owner_color,
         ct.name AS completed_by_name,
-        c.name AS client_name,
+        COALESCE(c.name, o.prospect_name) AS client_name,
         o.title AS opportunity_title
       FROM bd_tasks bt
       LEFT JOIN team t  ON t.id = bt.owner_id
@@ -179,7 +244,6 @@ router.get('/tasks', authenticate, async (req, res) => {
     if (done === 'true' || done === 'false') { sql += ` AND bt.done = $${i++}`; params.push(done === 'true'); }
     sql += ' ORDER BY bt.done ASC, bt.due_date ASC NULLS LAST, bt.created_at DESC';
     const { rows } = await query(sql, params);
-    // Bucket by due date for the Activities view.
     const today = new Date(); today.setHours(0, 0, 0, 0);
     for (const r of rows) {
       if (r.done) { r.bucket = 'Done'; continue; }
@@ -194,8 +258,7 @@ router.get('/tasks', authenticate, async (req, res) => {
   }
 });
 
-// POST /api/bd/tasks
-router.post('/tasks', authenticate, async (req, res) => {
+router.post('/tasks', async (req, res) => {
   try {
     const { title, opportunity_id, client_id, owner_id, due_date } = req.body;
     if (!title) return res.status(400).json({ error: 'Title is required' });
@@ -211,15 +274,13 @@ router.post('/tasks', authenticate, async (req, res) => {
   }
 });
 
-// PATCH /api/bd/tasks/:id/toggle
-router.patch('/tasks/:id/toggle', authenticate, async (req, res) => {
+router.patch('/tasks/:id/toggle', async (req, res) => {
   try {
     const cur = await query('SELECT done FROM bd_tasks WHERE id = $1', [req.params.id]);
     if (!cur.rows.length) return res.status(404).json({ error: 'Not found' });
     const nd = !cur.rows[0].done;
     await query(
-      `UPDATE bd_tasks
-       SET done = $1, completed_by = $2, completed_at = $3 WHERE id = $4`,
+      `UPDATE bd_tasks SET done = $1, completed_by = $2, completed_at = $3 WHERE id = $4`,
       [nd, nd ? req.user.id : null, nd ? new Date() : null, req.params.id]
     );
     res.json({ done: nd });
@@ -229,8 +290,7 @@ router.patch('/tasks/:id/toggle', authenticate, async (req, res) => {
   }
 });
 
-// DELETE /api/bd/tasks/:id
-router.delete('/tasks/:id', authenticate, async (req, res) => {
+router.delete('/tasks/:id', async (req, res) => {
   try {
     await query('DELETE FROM bd_tasks WHERE id = $1', [req.params.id]);
     res.json({ success: true });
@@ -242,8 +302,7 @@ router.delete('/tasks/:id', authenticate, async (req, res) => {
 
 /* ═══════════════════════ OVERVIEW (dashboard KPIs) ═══════════════════════ */
 
-// GET /api/bd/overview?period=week|month|quarter
-router.get('/overview', authenticate, async (req, res) => {
+router.get('/overview', async (req, res) => {
   try {
     const period = ['week', 'month', 'quarter'].includes(req.query.period) ? req.query.period : 'month';
     const since = new Date();
@@ -251,7 +310,6 @@ router.get('/overview', authenticate, async (req, res) => {
     else if (period === 'quarter') since.setMonth(since.getMonth() - 3);
     else since.setMonth(since.getMonth() - 1);
 
-    // Value + count per stage (all open + won/lost).
     const byStage = await query(
       `SELECT stage, COUNT(*)::int AS count, COALESCE(SUM(value),0)::float AS value
        FROM bd_opportunities GROUP BY stage`
@@ -265,18 +323,15 @@ router.get('/overview', authenticate, async (req, res) => {
     const openCount = stages.filter((s) => OPEN_STAGES.includes(s.stage)).reduce((a, s) => a + s.count, 0);
     const weighted = stages.reduce((a, s) => OPEN_STAGES.includes(s.stage) ? a + s.value * (PROB[s.stage] / 100) : a, 0);
 
-    // Won / lost this period (from the BD funnel).
     const wl = await query(
       `SELECT stage, COUNT(*)::int AS count, COALESCE(SUM(value),0)::float AS value
-       FROM bd_opportunities
-       WHERE stage IN ('Won','Lost') AND updated_at >= $1 GROUP BY stage`,
+       FROM bd_opportunities WHERE stage IN ('Won','Lost') AND updated_at >= $1 GROUP BY stage`,
       [since]
     );
     const won = wl.rows.find((r) => r.stage === 'Won') || { count: 0, value: 0 };
     const lost = wl.rows.find((r) => r.stage === 'Lost') || { count: 0, value: 0 };
     const winRate = (won.count + lost.count) ? Math.round((won.count / (won.count + lost.count)) * 100) : 0;
 
-    // Real placed-revenue this period, straight from the CRM's placements table.
     let placedRevenue = 0;
     try {
       const pr = await query(
@@ -286,14 +341,15 @@ router.get('/overview', authenticate, async (req, res) => {
       placedRevenue = pr.rows[0].total;
     } catch (e) { /* placements shape differs — leave at 0 */ }
 
-    // Top open opportunities + tasks due.
     const topOpps = await query(
       OPP_SELECT + ` WHERE o.stage IN ('Prospecting','Qualified','Proposal','Negotiation')
        ORDER BY o.value DESC NULLS LAST LIMIT 5`
     );
     const tasksDue = await query(
-      `SELECT bt.*, c.name AS client_name, t.name AS owner_name
-       FROM bd_tasks bt LEFT JOIN clients c ON c.id = bt.client_id
+      `SELECT bt.*, COALESCE(c.name, o.prospect_name) AS client_name, t.name AS owner_name
+       FROM bd_tasks bt
+       LEFT JOIN clients c ON c.id = bt.client_id
+       LEFT JOIN bd_opportunities o ON o.id = bt.opportunity_id
        LEFT JOIN team t ON t.id = bt.owner_id
        WHERE bt.done = false AND (bt.due_date IS NULL OR bt.due_date <= CURRENT_DATE + INTERVAL '2 days')
        ORDER BY bt.due_date ASC NULLS LAST LIMIT 6`
