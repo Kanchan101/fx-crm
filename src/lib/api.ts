@@ -91,4 +91,22 @@ export const api = {
     list: () => apiFetch('/api/team'),
     get: (id: string) => apiFetch(`/api/team/${id}`),
   },
+  bd: {
+    overview: (params?: string) => apiFetch(`/api/bd/overview${params ? `?${params}` : ''}`),
+    opportunities: {
+      list: (params?: string) => apiFetch(`/api/bd/opportunities${params ? `?${params}` : ''}`),
+      get: (id: string) => apiFetch(`/api/bd/opportunities/${id}`),
+      create: (data: any) => apiFetch('/api/bd/opportunities', { method: 'POST', body: JSON.stringify(data) }),
+      updateStage: (id: string, stage: string, lost_reason?: string) =>
+        apiFetch(`/api/bd/opportunities/${id}/stage`, { method: 'PATCH', body: JSON.stringify({ stage, lost_reason }) }),
+      update: (id: string, data: any) => apiFetch(`/api/bd/opportunities/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      remove: (id: string) => apiFetch(`/api/bd/opportunities/${id}`, { method: 'DELETE' }),
+    },
+    tasks: {
+      list: (params?: string) => apiFetch(`/api/bd/tasks${params ? `?${params}` : ''}`),
+      create: (data: any) => apiFetch('/api/bd/tasks', { method: 'POST', body: JSON.stringify(data) }),
+      toggle: (id: string) => apiFetch(`/api/bd/tasks/${id}/toggle`, { method: 'PATCH' }),
+      remove: (id: string) => apiFetch(`/api/bd/tasks/${id}`, { method: 'DELETE' }),
+    },
+  },
 };

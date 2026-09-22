@@ -18,6 +18,7 @@ const outreachRoutes = require('./routes/outreach');
 const spocRoutes = require('./routes/spocs');
 const sendcvRoutes = require('./routes/sendcv');
 const publicRoutes = require('./routes/public');
+const bdRoutes = require('./routes/bd');
 const { authenticate } = require('./middleware/auth');
 
 const app = express();
@@ -65,6 +66,7 @@ app.use('/api/interviews', authenticate, apiLimiter, interviewRoutes);
 app.use('/api/reports', authenticate, apiLimiter, reportRoutes);
 app.use('/api/outreach', authenticate, outreachRoutes);
 app.use('/api/send-cv', authenticate, sendcvRoutes);
+app.use('/api/bd', authenticate, apiLimiter, bdRoutes);
 
 app.use((err, req, res, next) => {
   console.error('Error:', err.message);

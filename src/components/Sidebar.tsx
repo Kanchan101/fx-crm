@@ -6,7 +6,7 @@ import { useContext } from 'react';
 import { SidebarContext } from '@/app/(dashboard)/layout';
 import {
   LayoutDashboard, Building2, Users, Kanban, Calendar,
-  BarChart3, UserCog, LogOut, ChevronLeft, Briefcase, X,
+  BarChart3, UserCog, LogOut, ChevronLeft, Briefcase, X, Target,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -14,6 +14,7 @@ interface NavItem { label: string; href: string; icon: React.ElementType; roles?
 
 const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+  { label: 'BD Pipeline', href: '/bd', icon: Target },
   { label: 'Requirements', href: '/requirements', icon: Briefcase },
   { label: 'Candidates', href: '/candidates', icon: Users },
   { label: 'Clients', href: '/clients', icon: Building2 },
