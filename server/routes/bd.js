@@ -16,7 +16,7 @@ const OPP_SELECT = `
     c.tier    AS client_tier,
     c.vertical AS client_vertical,
     t.name    AS owner_name,
-    t.avatar_color AS owner_color,
+    NULL::text AS owner_color,
     GREATEST(0, DATE_PART('day', NOW() - o.last_stage_at))::int AS idle_days
   FROM bd_opportunities o
   LEFT JOIN clients c ON c.id = o.client_id
@@ -336,7 +336,7 @@ router.get('/tasks', async (req, res) => {
     const { owner_id, done } = req.query;
     let sql = `
       SELECT bt.*,
-        t.name AS owner_name, t.avatar_color AS owner_color,
+        t.name AS owner_name, NULL::text AS owner_color,
         ct.name AS completed_by_name,
         COALESCE(c.name, o.prospect_name) AS client_name,
         o.title AS opportunity_title
