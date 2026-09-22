@@ -1,41 +1,36 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import {
-  Target, Plus, X, TrendingUp, Trophy, Percent, IndianRupee,
-  AlertCircle, Trash2, Loader2, Shield, Lock, Check,
+  TrendingUp, Trophy, Percent, IndianRupee, Loader2, ArrowRight,
+  AlertTriangle, CheckCircle2, Circle, Sparkles,
 } from 'lucide-react';
 import clsx from 'clsx';
 
 interface Opp {
-  id: string;
-  client_id: string | null;
-  title: string;
-  stage: string;
-  value: number;
-  owner_id: string | null;
-  owner_name: string | null;
-  owner_color: string | null;
-  client_name: string | null;
-  is_prospect: boolean;
-  client_tier: string | null;
-  idle_days: number;
+  id: string; title: string; client_name: string | null; is_prospect: boolean;
+  value: number; stage: string; idle_days: number; owner_name: string | null;
+}
+interface Task {
+  id: string; title: string; client_name: string | null; owner_name: string | null;
+  due_date: string | null; done: boolean;
 }
 interface Overview {
   openValue: number; weighted: number; openCount: number;
   wonCount: number; wonValue: number; winRate: number; placedRevenue: number;
+  stages: { stage: string; count: number; value: number }[];
+  topOpportunities: Opp[]; tasksDue: Task[];
 }
-interface Client { id: string; name: string; }
-interface TeamMember { id: string; name: string; role: string; }
-interface AccessMember { id: string; name: string; email: string; role: string; bd_access: boolean; }
 
-const BOARD_STAGES = ['Prospecting', 'Qualified', 'Proposal', 'Negotiation', 'Won'];
-const MOVE_STAGES = [...BOARD_STAGES, 'Lost'];
-const STAGE_DOT: Record<string, string> = {
-  Prospecting: 'bg-gray-400', Qualified: 'bg-fx-500', Proposal: 'bg-violet-500',
-  Negotiation: 'bg-amber-500', Won: 'bg-emerald-500', Lost: 'bg-red-400',
+const FUNNEL = ['Prospecting', 'Qualified', 'Proposal', 'Negotiation', 'Won'];
+const STAGE_BAR: Record<string, string> = {
+  Prospecting: '#9ca3af', Qualified: '#4c6ef5', Proposal: '#8b5cf6', Negotiation: '#f59e0b', Won: '#10b981',
+};
+const STAGE_PILL: Record<string, string> = {
+  Prospecting: 'bg-gray-100 text-gray-600', Qualified: 'bg-fx-50 text-fx-600',
+  Proposal: 'bg-violet-50 text-violet-600', Negotiation: 'bg-amber-50 text-amber-700', Won: 'bg-emerald-50 text-emerald-600',
 };
 
 function fmtINR(rupees: number): string {
@@ -44,439 +39,190 @@ function fmtINR(rupees: number): string {
   if (r >= 1e5) return `₹${(r / 1e5).toFixed(1)} L`;
   return `₹${Math.round(r).toLocaleString('en-IN')}`;
 }
-const initialsOf = (name?: string | null) =>
-  (name || '?').split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+function dueLabel(d: string | null): { text: string; cls: string } {
+  if (!d) return { text: 'No date', cls: 'text-gray-400' };
+  const due = new Date(d); due.setHours(0, 0, 0, 0);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
+  if (diff < 0) return { text: 'Overdue', cls: 'text-red-500 font-semibold' };
+  if (diff === 0) return { text: 'Today', cls: 'text-fx-600 font-semibold' };
+  if (diff === 1) return { text: 'Tomorrow', cls: 'text-gray-500' };
+  return { text: due.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }), cls: 'text-gray-500' };
+}
 
-const emptyForm = {
-  mode: 'existing' as 'existing' | 'new',
-  client_id: '', prospect_name: '', title: '', stage: 'Prospecting', valueL: '', owner_id: '', expected_close: '',
-};
-
-export default function BDPipelinePage() {
-  const { user, isRole } = useAuth();
-  const canManage = isRole('Super Admin', 'Account Manager');
-  const isAdmin = isRole('Super Admin');
-
-  const [opps, setOpps] = useState<Opp[]>([]);
-  const [overview, setOverview] = useState<Overview | null>(null);
-  const [clients, setClients] = useState<Client[]>([]);
-  const [team, setTeam] = useState<TeamMember[]>([]);
+export default function BDDashboardPage() {
+  const router = useRouter();
+  const [ov, setOv] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
-  const [denied, setDenied] = useState(false);
   const [period, setPeriod] = useState<'week' | 'month' | 'quarter'>('month');
-  const [search, setSearch] = useState('');
-  const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState(emptyForm);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [movingId, setMovingId] = useState<string | null>(null);
 
-  // Access management (Super Admin)
-  const [accessOpen, setAccessOpen] = useState(false);
-  const [members, setMembers] = useState<AccessMember[]>([]);
-  const [accessLoading, setAccessLoading] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try { setOv(await api.bd.overview(`period=${period}`)); }
+    catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }, [period]);
 
-  const fetchBoard = useCallback(async () => {
-    try {
-      const p = new URLSearchParams();
-      if (search) p.set('search', search);
-      const [oppData, ovData] = await Promise.all([
-        api.bd.opportunities.list(p.toString()),
-        api.bd.overview(`period=${period}`),
-      ]);
-      setOpps(oppData.opportunities || []);
-      setOverview(ovData);
-      setDenied(false);
-    } catch (err: any) {
-      if (/access|permission/i.test(err?.message || '')) setDenied(true);
-      else console.error(err);
-    } finally { setLoading(false); }
-  }, [search, period]);
+  useEffect(() => { load(); }, [load]);
 
-  const fetchMeta = useCallback(async () => {
-    try {
-      const [c, t] = await Promise.all([api.clients.list(''), api.team.list()]);
-      setClients(c.clients || []);
-      setTeam((t.team || []).filter((m: TeamMember & { is_active?: boolean }) => m.is_active !== false));
-    } catch (err) { /* ignore — not fatal for the board */ }
-  }, []);
-
-  useEffect(() => { fetchBoard(); }, [fetchBoard]);
-  useEffect(() => { fetchMeta(); }, [fetchMeta]);
-
-  // Load member list when the access panel opens
-  useEffect(() => {
-    if (!accessOpen) return;
-    setAccessLoading(true);
-    api.bd.access.list()
-      .then((d: any) => setMembers(d.members || []))
-      .catch(() => {})
-      .finally(() => setAccessLoading(false));
-  }, [accessOpen]);
-
-  const toggleAccess = async (m: AccessMember) => {
-    if (m.role === 'Super Admin') return; // admins always have access
-    const next = !m.bd_access;
-    setBusyId(m.id);
-    setMembers((prev) => prev.map((x) => (x.id === m.id ? { ...x, bd_access: next } : x)));
-    try { await api.bd.access.set(m.id, next); }
-    catch { setMembers((prev) => prev.map((x) => (x.id === m.id ? { ...x, bd_access: !next } : x))); }
-    finally { setBusyId(null); }
+  const toggleTask = async (id: string) => {
+    setOv((prev) => prev ? { ...prev, tasksDue: prev.tasksDue.map((t) => t.id === id ? { ...t, done: !t.done } : t) } : prev);
+    try { await api.bd.tasks.toggle(id); await load(); } catch (e) { await load(); }
   };
 
-  const moveStage = async (opp: Opp, stage: string) => {
-    if (stage === opp.stage) return;
-    setMovingId(opp.id);
-    setOpps((prev) => prev.map((o) => (o.id === opp.id ? { ...o, stage } : o)));
-    try { await api.bd.opportunities.updateStage(String(opp.id), stage); await fetchBoard(); }
-    catch (err) { console.error(err); await fetchBoard(); }
-    finally { setMovingId(null); }
-  };
-
-  const removeOpp = async (id: string) => {
-    if (!confirm('Delete this opportunity? This cannot be undone.')) return;
-    try { await api.bd.opportunities.remove(String(id)); await fetchBoard(); }
-    catch (err) { console.error(err); }
-  };
-
-  const openAdd = () => {
-    setForm({ ...emptyForm, owner_id: user?.id ? String(user.id) : '' });
-    setError('');
-    setShowModal(true);
-  };
-
-  const saveOpp = async () => {
-    if (!form.title.trim()) { setError('A title is required.'); return; }
-    if (form.mode === 'existing' && !form.client_id) { setError('Pick a client, or switch to “New company”.'); return; }
-    if (form.mode === 'new' && !form.prospect_name.trim()) { setError('Enter the new company name.'); return; }
-    setSaving(true); setError('');
-    try {
-      await api.bd.opportunities.create({
-        client_id: form.mode === 'existing' ? form.client_id : undefined,
-        prospect_name: form.mode === 'new' ? form.prospect_name.trim() : undefined,
-        title: form.title.trim(),
-        stage: form.stage,
-        value: form.valueL ? Math.round(parseFloat(form.valueL) * 1e5) : 0,
-        owner_id: form.owner_id || undefined,
-        expected_close: form.expected_close || undefined,
-      });
-      setShowModal(false);
-      await fetchBoard();
-    } catch (err: any) { setError(err.message || 'Could not save.'); }
-    finally { setSaving(false); }
-  };
-
-  const byStage = (s: string) => opps.filter((o) => o.stage === s);
-  const colValue = (s: string) => byStage(s).reduce((a, o) => a + (Number(o.value) || 0), 0);
-
-  if (denied) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 text-center">
-        <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
-          <Lock className="w-6 h-6 text-gray-400" />
-        </div>
-        <h2 className="text-lg font-semibold text-gray-900">BD Pipeline is restricted</h2>
-        <p className="text-sm text-gray-500 mt-1 max-w-sm">You don’t have access to this area yet. Ask a Super Admin to enable BD Pipeline access for your account.</p>
-      </div>
-    );
+  if (loading) {
+    return <div className="flex items-center justify-center py-24 text-gray-400"><Loader2 className="w-6 h-6 animate-spin" /></div>;
   }
 
+  const stageVal = (s: string) => ov?.stages.find((x) => x.stage === s)?.value || 0;
+  const stageCnt = (s: string) => ov?.stages.find((x) => x.stage === s)?.count || 0;
+  const maxStage = Math.max(1, ...FUNNEL.map(stageVal));
+  const attention = (ov?.topOpportunities || []).filter((o) => o.idle_days > 7).sort((a, b) => b.idle_days - a.idle_days)[0];
+
   const kpis = [
-    { label: 'Open pipeline', value: overview ? fmtINR(overview.openValue) : '—', icon: TrendingUp, tint: 'bg-fx-50 text-fx-600' },
-    { label: 'Weighted forecast', value: overview ? fmtINR(overview.weighted) : '—', icon: IndianRupee, tint: 'bg-emerald-50 text-emerald-600' },
-    { label: `Won · this ${period}`, value: overview ? String(overview.wonCount) : '—', icon: Trophy, tint: 'bg-violet-50 text-violet-600' },
-    { label: 'Win rate', value: overview ? `${overview.winRate}%` : '—', icon: Percent, tint: 'bg-amber-50 text-amber-600' },
+    { label: 'Open pipeline', value: fmtINR(ov?.openValue || 0), sub: `${ov?.openCount || 0} open`, icon: TrendingUp, tint: 'bg-fx-50 text-fx-600' },
+    { label: 'Weighted forecast', value: fmtINR(ov?.weighted || 0), sub: 'probability-adjusted', icon: IndianRupee, tint: 'bg-emerald-50 text-emerald-600' },
+    { label: `Won · this ${period}`, value: String(ov?.wonCount || 0), sub: fmtINR(ov?.wonValue || 0), icon: Trophy, tint: 'bg-violet-50 text-violet-600' },
+    { label: 'Win rate', value: `${ov?.winRate || 0}%`, sub: `this ${period}`, icon: Percent, tint: 'bg-amber-50 text-amber-700' },
   ];
 
   return (
     <div className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-            <Target className="w-5 h-5 text-fx-600" /> BD Pipeline
-          </h1>
-          <p className="text-sm text-gray-500 mt-0.5">Opportunities to win and grow client accounts — synced with your BD team.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex bg-gray-100 rounded-lg p-0.5">
-            {(['week', 'month', 'quarter'] as const).map((p) => (
-              <button key={p} onClick={() => setPeriod(p)}
-                className={clsx('px-3 py-1.5 text-xs font-medium rounded-md capitalize',
-                  period === p ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700')}>
-                {p}
-              </button>
-            ))}
-          </div>
-          {isAdmin && (
-            <button onClick={() => setAccessOpen(true)}
-              className="flex items-center gap-1.5 border border-gray-200 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg">
-              <Shield className="w-4 h-4" /> Manage access
+      <div className="flex items-center justify-end">
+        <div className="flex bg-gray-100 rounded-lg p-0.5">
+          {(['week', 'month', 'quarter'] as const).map((p) => (
+            <button key={p} onClick={() => setPeriod(p)}
+              className={clsx('px-3 py-1.5 text-xs font-medium rounded-md capitalize',
+                period === p ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700')}>
+              {p}
             </button>
-          )}
-          <button onClick={openAdd}
-            className="flex items-center gap-1.5 bg-fx-600 hover:bg-fx-700 text-white text-sm font-medium px-3.5 py-2 rounded-lg transition-colors">
-            <Plus className="w-4 h-4" /> New opportunity
-          </button>
+          ))}
         </div>
       </div>
 
-      {/* KPI strip */}
+      {/* KPIs */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {kpis.map((k) => (
           <div key={k.label} className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="flex items-center justify-between">
               <span className="text-xs text-gray-500 font-medium">{k.label}</span>
-              <span className={clsx('w-7 h-7 rounded-lg flex items-center justify-center', k.tint)}>
-                <k.icon className="w-4 h-4" />
-              </span>
+              <span className={clsx('w-7 h-7 rounded-lg flex items-center justify-center', k.tint)}><k.icon className="w-4 h-4" /></span>
             </div>
             <p className="text-2xl font-semibold text-gray-900 mt-2">{k.value}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">{k.sub}</p>
           </div>
         ))}
       </div>
 
-      {/* Search */}
-      <div className="flex items-center gap-2">
-        <input
-          value={search} onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search opportunities or companies…"
-          className="w-full sm:w-72 text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-fx-500/30 focus:border-fx-500"
-        />
-        {overview && (
-          <span className="text-xs text-gray-400 ml-auto hidden sm:block">
-            {overview.openCount} open · {fmtINR(overview.placedRevenue)} placed revenue this {period}
-          </span>
-        )}
-      </div>
-
-      {/* Board */}
-      {loading ? (
-        <div className="flex items-center justify-center py-24 text-gray-400">
-          <Loader2 className="w-6 h-6 animate-spin" />
-        </div>
-      ) : (
-        <div className="flex gap-4 overflow-x-auto pb-4">
-          {BOARD_STAGES.map((stage) => {
-            const items = byStage(stage);
-            return (
-              <div key={stage} className="flex-1 min-w-[240px]">
-                <div className="flex items-center justify-between px-1 mb-2.5">
-                  <div className="flex items-center gap-2">
-                    <span className={clsx('w-2 h-2 rounded-full', STAGE_DOT[stage])} />
-                    <span className="text-sm font-semibold text-gray-800">{stage}</span>
-                    <span className="text-xs text-gray-400">{items.length}</span>
-                  </div>
-                  <span className="text-xs font-medium text-gray-500">{fmtINR(colValue(stage))}</span>
-                </div>
-
-                <div className="space-y-2.5">
-                  {stage === 'Prospecting' && (
-                    <button onClick={openAdd}
-                      className="w-full text-xs text-gray-400 border border-dashed border-gray-300 rounded-xl py-2 hover:border-fx-400 hover:text-fx-600 transition-colors">
-                      + Add opportunity
-                    </button>
-                  )}
-                  {items.map((o) => {
-                    const idle = o.idle_days > 7 && stage !== 'Won';
-                    const won = stage === 'Won';
-                    return (
-                      <div key={o.id}
-                        className={clsx('relative bg-white border rounded-xl p-3 shadow-sm',
-                          won ? 'border-emerald-200 bg-emerald-50/40' : 'border-gray-200',
-                          idle && 'border-amber-300')}>
-                        {idle && <span className="absolute top-3 right-3 w-1.5 h-1.5 rounded-full bg-red-500" title={`${o.idle_days} days no movement`} />}
-                        <p className="text-sm font-semibold text-gray-900 pr-3 leading-snug">{o.title}</p>
-                        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                          <span className="text-[11px] font-medium text-gray-600 bg-gray-100 rounded px-1.5 py-0.5">
-                            {o.client_name || 'Unlinked'}
-                          </span>
-                          {o.is_prospect
-                            ? <span className="text-[11px] font-medium text-amber-700 bg-amber-50 rounded px-1.5 py-0.5">Prospect</span>
-                            : (o.client_tier && <span className="text-[11px] text-gray-400">{o.client_tier}</span>)}
-                        </div>
-                        <div className="flex items-center justify-between mt-2.5">
-                          <span className="text-sm font-bold text-gray-900">{fmtINR(o.value)}</span>
-                          {idle
-                            ? <span className="text-[11px] font-semibold text-red-500">{o.idle_days}d idle</span>
-                            : (
-                              <span className="w-6 h-6 rounded-md flex items-center justify-center text-[10px] font-bold text-white"
-                                style={{ backgroundColor: o.owner_color || '#4c6ef5' }}
-                                title={o.owner_name || 'Unassigned'}>
-                                {initialsOf(o.owner_name)}
-                              </span>
-                            )}
-                        </div>
-                        <div className="flex items-center gap-1.5 mt-2.5">
-                          <select
-                            value={o.stage}
-                            disabled={movingId === o.id}
-                            onChange={(e) => moveStage(o, e.target.value)}
-                            className="flex-1 text-[11px] font-medium text-gray-600 border border-gray-200 rounded-md px-2 py-1 bg-white focus:outline-none focus:border-fx-500 disabled:opacity-50">
-                            {MOVE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                          {canManage && (
-                            <button onClick={() => removeOpp(o.id)}
-                              className="w-7 h-7 rounded-md border border-gray-200 text-gray-400 hover:text-red-500 hover:border-red-200 flex items-center justify-center shrink-0">
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {items.length === 0 && stage !== 'Prospecting' && (
-                    <p className="text-xs text-gray-300 text-center py-6">No opportunities</p>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* New opportunity modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowModal(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 pt-5 pb-2">
-              <h3 className="text-lg font-semibold text-gray-900">New opportunity</h3>
-              <button onClick={() => setShowModal(false)} className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500">
-                <X className="w-4 h-4" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Left: pipeline by stage + top opportunities */}
+        <div className="lg:col-span-2 space-y-4">
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-900">Pipeline by stage</h3>
+              <button onClick={() => router.push('/bd/pipeline')} className="text-xs font-medium text-fx-600 hover:text-fx-700 flex items-center gap-1">
+                Open board <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
-            <div className="px-5 pb-5 space-y-3.5">
-              {error && (
-                <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+            <div className="space-y-3">
+              {FUNNEL.map((s) => (
+                <div key={s} className="flex items-center gap-3">
+                  <span className="w-24 shrink-0 text-xs text-gray-600">{s}</span>
+                  <div className="flex-1 h-8 bg-gray-100 rounded-lg overflow-hidden">
+                    <div className="h-full rounded-lg flex items-center px-2" style={{ width: `${Math.max(6, (stageVal(s) / maxStage) * 100)}%`, backgroundColor: STAGE_BAR[s] }}>
+                      <span className="text-[11px] font-semibold text-white whitespace-nowrap">{fmtINR(stageVal(s))}</span>
+                    </div>
+                  </div>
+                  <span className="w-8 shrink-0 text-right text-xs text-gray-400">{stageCnt(s)}</span>
                 </div>
-              )}
-
-              {/* Company: existing client OR new prospect */}
-              <div>
-                <span className="text-xs font-medium text-gray-600 mb-1 block">Company</span>
-                <div className="flex bg-gray-100 rounded-lg p-0.5 mb-2">
-                  <button type="button" onClick={() => setForm({ ...form, mode: 'existing' })}
-                    className={clsx('flex-1 py-1.5 text-xs font-medium rounded-md',
-                      form.mode === 'existing' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500')}>
-                    Existing client
-                  </button>
-                  <button type="button" onClick={() => setForm({ ...form, mode: 'new' })}
-                    className={clsx('flex-1 py-1.5 text-xs font-medium rounded-md',
-                      form.mode === 'new' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500')}>
-                    New company
-                  </button>
-                </div>
-                {form.mode === 'existing' ? (
-                  <select value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })} className={inputCls}>
-                    <option value="">Select a client…</option>
-                    {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                ) : (
-                  <>
-                    <input value={form.prospect_name} onChange={(e) => setForm({ ...form, prospect_name: e.target.value })}
-                      placeholder="e.g. Sunridge Motors" className={inputCls} />
-                    <p className="text-[11px] text-gray-400 mt-1">Tracked as a prospect in BD until you win it.</p>
-                  </>
-                )}
-              </div>
-
-              <Field label="Opportunity / mandate">
-                <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })}
-                  placeholder="e.g. EV powertrain engineers — 40 roles" className={inputCls} />
-              </Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Stage">
-                  <select value={form.stage} onChange={(e) => setForm({ ...form, stage: e.target.value })} className={inputCls}>
-                    {BOARD_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </Field>
-                <Field label="Est. value (₹ L)">
-                  <input type="number" value={form.valueL} onChange={(e) => setForm({ ...form, valueL: e.target.value })}
-                    placeholder="40" className={inputCls} />
-                </Field>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Owner">
-                  <select value={form.owner_id} onChange={(e) => setForm({ ...form, owner_id: e.target.value })} className={inputCls}>
-                    <option value="">Unassigned</option>
-                    {team.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                  </select>
-                </Field>
-                <Field label="Expected close">
-                  <input type="date" value={form.expected_close} onChange={(e) => setForm({ ...form, expected_close: e.target.value })} className={inputCls} />
-                </Field>
-              </div>
-              <div className="flex justify-end gap-2 pt-1">
-                <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">Cancel</button>
-                <button onClick={saveOpp} disabled={saving}
-                  className="px-4 py-2 text-sm font-medium text-white bg-fx-600 hover:bg-fx-700 rounded-lg flex items-center gap-2 disabled:opacity-60">
-                  {saving && <Loader2 className="w-4 h-4 animate-spin" />} Save opportunity
-                </button>
-              </div>
+              ))}
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Manage access modal (Super Admin) */}
-      {accessOpen && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setAccessOpen(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 pt-5 pb-1">
-              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <Shield className="w-4 h-4 text-fx-600" /> BD Pipeline access
-              </h3>
-              <button onClick={() => setAccessOpen(false)} className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="px-5 text-xs text-gray-500">Choose who can see and use the BD Pipeline. Super Admins always have access.</p>
-            <div className="px-5 py-4 space-y-1.5">
-              {accessLoading ? (
-                <div className="flex items-center justify-center py-10 text-gray-400"><Loader2 className="w-5 h-5 animate-spin" /></div>
-              ) : members.map((m) => {
-                const admin = m.role === 'Super Admin';
-                const on = admin || m.bd_access;
-                return (
-                  <div key={m.id} className="flex items-center gap-3 py-2">
-                    <div className="w-8 h-8 rounded-full bg-fx-100 text-fx-700 flex items-center justify-center text-xs font-semibold shrink-0">
-                      {initialsOf(m.name)}
-                    </div>
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <h3 className="text-sm font-semibold text-gray-900 mb-1">Top open opportunities</h3>
+            <p className="text-xs text-gray-400 mb-3">Largest deals still in play</p>
+            {(ov?.topOpportunities || []).length === 0 ? (
+              <p className="text-sm text-gray-400 py-6 text-center">No open opportunities yet. Add one on the Pipeline tab.</p>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {ov!.topOpportunities.map((o) => (
+                  <div key={o.id} onClick={() => router.push('/bd/pipeline')}
+                    className="flex items-center gap-3 py-2.5 cursor-pointer hover:bg-gray-50 -mx-2 px-2 rounded-lg">
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">{m.name}</p>
-                      <p className="text-[11px] text-gray-400 truncate">{m.role}</p>
+                      <p className="text-sm font-medium text-gray-900 truncate">{o.title}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-xs text-gray-500 truncate">{o.client_name || 'Unlinked'}</span>
+                        {o.is_prospect && <span className="text-[10px] font-medium text-amber-700 bg-amber-50 rounded px-1 py-0.5">Prospect</span>}
+                      </div>
                     </div>
-                    {admin ? (
-                      <span className="text-[11px] font-medium text-emerald-600 bg-emerald-50 rounded px-2 py-1">Always on</span>
-                    ) : (
-                      <button onClick={() => toggleAccess(m)} disabled={busyId === m.id}
-                        className={clsx('relative w-11 h-6 rounded-full transition-colors shrink-0',
-                          on ? 'bg-fx-600' : 'bg-gray-300', busyId === m.id && 'opacity-60')}>
-                        <span className={clsx('absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform flex items-center justify-center',
-                          on && 'translate-x-5')}>
-                          {on && <Check className="w-3 h-3 text-fx-600" />}
-                        </span>
-                      </button>
-                    )}
+                    <span className={clsx('text-[11px] font-medium rounded px-2 py-0.5 shrink-0', STAGE_PILL[o.stage] || 'bg-gray-100 text-gray-600')}>{o.stage}</span>
+                    <span className="text-sm font-bold text-gray-900 w-20 text-right shrink-0">{fmtINR(o.value)}</span>
                   </div>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
-      )}
-    </div>
-  );
-}
 
-const inputCls = 'w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-fx-500/30 focus:border-fx-500';
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="text-xs font-medium text-gray-600 mb-1 block">{label}</span>
-      {children}
-    </label>
+        {/* Right: needs attention + tasks */}
+        <div className="space-y-4">
+          {attention ? (
+            <div className="rounded-xl p-5 bg-fx-950 text-white">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-6 h-6 rounded-md bg-white/10 flex items-center justify-center"><AlertTriangle className="w-3.5 h-3.5 text-amber-300" /></span>
+                <span className="text-sm font-semibold">Needs attention</span>
+              </div>
+              <p className="text-sm text-gray-300 leading-relaxed">
+                <span className="text-white font-semibold">{attention.client_name || attention.title}</span> has had no movement in{' '}
+                <span className="text-white font-semibold">{attention.idle_days} days</span> — {attention.title} ({fmtINR(attention.value)}). Give it a nudge before it goes cold.
+              </p>
+              <button onClick={() => router.push('/bd/pipeline')} className="mt-3 bg-fx-600 hover:bg-fx-700 text-white text-xs font-medium px-3 py-2 rounded-lg">Open board</button>
+            </div>
+          ) : (
+            <div className="rounded-xl p-5 bg-fx-950 text-white">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-6 h-6 rounded-md bg-white/10 flex items-center justify-center"><Sparkles className="w-3.5 h-3.5 text-fx-300" /></span>
+                <span className="text-sm font-semibold">On track</span>
+              </div>
+              <p className="text-sm text-gray-300 leading-relaxed">No stalled opportunities right now — everything in the pipeline has moved recently. Keep the momentum going.</p>
+            </div>
+          )}
+
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-900">Priority tasks</h3>
+              <button onClick={() => router.push('/bd/pipeline')} className="text-xs font-medium text-fx-600 hover:text-fx-700">View board</button>
+            </div>
+            {(ov?.tasksDue || []).length === 0 ? (
+              <p className="text-sm text-gray-400 py-6 text-center">Nothing due right now.</p>
+            ) : (
+              <div className="space-y-1">
+                {ov!.tasksDue.map((t) => {
+                  const dl = dueLabel(t.due_date);
+                  return (
+                    <div key={t.id} className="flex items-center gap-2.5 py-2">
+                      <button onClick={() => toggleTask(t.id)} className="shrink-0 text-gray-300 hover:text-fx-600">
+                        {t.done ? <CheckCircle2 className="w-[18px] h-[18px] text-fx-600" /> : <Circle className="w-[18px] h-[18px]" />}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <p className={clsx('text-sm truncate', t.done ? 'line-through text-gray-400' : 'text-gray-800 font-medium')}>{t.title}</p>
+                        {t.client_name && <p className="text-[11px] text-gray-400 truncate">{t.client_name}</p>}
+                      </div>
+                      <span className={clsx('text-[11px] shrink-0', dl.cls)}>{dl.text}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <h3 className="text-sm font-semibold text-gray-900 mb-1">Placed revenue</h3>
+            <p className="text-[11px] text-gray-400 mb-2">Actual fees from joins · this {period}</p>
+            <p className="text-2xl font-semibold text-gray-900">{fmtINR(ov?.placedRevenue || 0)}</p>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
