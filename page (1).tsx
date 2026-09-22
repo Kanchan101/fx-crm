@@ -76,7 +76,7 @@ export default function BDProspectDetailPage() {
   const onboard = async () => {
     if (!confirm(`Onboard ${prospect?.name} as a client? This moves them into your Clients list with all their contacts and notes.`)) return;
     setOnboarding(true);
-    try { const r = await api.bd.prospects.onboard(id); if (r?.client_id) router.push(`/bd/accounts/${r.client_id}`); }
+    try { const r = await api.bd.prospects.onboard(id); if (r?.client_id) router.push('/clients'); }
     catch (e: any) { alert(e.message || 'Could not onboard.'); setOnboarding(false); }
   };
 
@@ -112,8 +112,8 @@ export default function BDProspectDetailPage() {
       {prospect.onboarded_client_id && (
         <div className="flex items-center justify-between gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
           <p className="text-sm text-emerald-800">This prospect has been onboarded as a client.</p>
-          <button onClick={() => router.push(`/bd/accounts/${prospect.onboarded_client_id}`)} className="text-sm font-medium text-emerald-700 hover:text-emerald-900 flex items-center gap-1">
-            View client <ExternalLink className="w-3.5 h-3.5" />
+          <button onClick={() => router.push('/clients')} className="text-sm font-medium text-emerald-700 hover:text-emerald-900 flex items-center gap-1">
+            View in Clients <ExternalLink className="w-3.5 h-3.5" />
           </button>
         </div>
       )}

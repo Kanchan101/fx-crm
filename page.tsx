@@ -88,11 +88,6 @@ export default function BDBoardPage() {
     catch (err) { console.error(err); }
   };
 
-  const openCompany = (opp: Opp) => {
-    if (opp.is_prospect && opp.prospect_id) router.push(`/bd/prospects/${opp.prospect_id}`);
-    else if (opp.client_id) router.push(`/bd/accounts/${opp.client_id}`);
-  };
-
   const openAdd = () => {
     setForm({ ...emptyForm, owner_id: user?.id ? String(user.id) : '' });
     setError('');
@@ -172,7 +167,11 @@ export default function BDBoardPage() {
                         {idle && <span className="absolute top-3 right-3 w-1.5 h-1.5 rounded-full bg-red-500" title={`${o.idle_days} days no movement`} />}
                         <p className="text-sm font-semibold text-gray-900 pr-3 leading-snug">{o.title}</p>
                         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                          <button onClick={() => openCompany(o)} className="text-[11px] font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded px-1.5 py-0.5">{o.client_name || 'Unlinked'}</button>
+                          {o.is_prospect && o.prospect_id ? (
+                            <button onClick={() => router.push(`/bd/prospects/${o.prospect_id}`)} className="text-[11px] font-medium text-fx-700 bg-fx-50 hover:bg-fx-100 rounded px-1.5 py-0.5">{o.client_name || 'Unlinked'}</button>
+                          ) : (
+                            <span className="text-[11px] font-medium text-gray-600 bg-gray-100 rounded px-1.5 py-0.5">{o.client_name || 'Unlinked'}</span>
+                          )}
                           {o.is_prospect
                             ? <span className="text-[11px] font-medium text-amber-700 bg-amber-50 rounded px-1.5 py-0.5">Prospect</span>
                             : (o.client_tier && <span className="text-[11px] text-gray-400">{o.client_tier}</span>)}

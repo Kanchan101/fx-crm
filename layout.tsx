@@ -4,7 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
 import { useEffect, useState } from 'react';
-import { Target, LayoutDashboard, Kanban, Building2, CalendarClock, Sparkles, Shield, X, Loader2, Check, Lock } from 'lucide-react';
+import { Target, LayoutDashboard, Kanban, CalendarClock, Sparkles, Shield, X, Loader2, Check, Lock } from 'lucide-react';
 import clsx from 'clsx';
 
 interface AccessMember { id: string; name: string; email: string; role: string; bd_access: boolean; }
@@ -12,7 +12,6 @@ interface AccessMember { id: string; name: string; email: string; role: string; 
 const TABS = [
   { label: 'Dashboard', href: '/bd', icon: LayoutDashboard },
   { label: 'Pipeline', href: '/bd/pipeline', icon: Kanban },
-  { label: 'Clients', href: '/bd/accounts', icon: Building2 },
   { label: 'Activities', href: '/bd/activities', icon: CalendarClock },
   { label: 'AI Strategy', href: '/bd/strategy', icon: Sparkles },
 ];

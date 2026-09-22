@@ -424,8 +424,8 @@ router.post('/prospects/:id/onboard', authorize('Super Admin', 'Account Manager'
     if (p.onboarded_client_id) return res.json({ client_id: p.onboarded_client_id });
 
     const ins = await query(
-      `INSERT INTO clients (name, vertical, created_by) VALUES ($1, $2, $3) RETURNING id`,
-      [p.name, p.sector || null, req.user.id]
+      `INSERT INTO clients (name, vertical, notes, created_by) VALUES ($1, $2, $3, $4) RETURNING id`,
+      [p.name, p.sector || null, p.notes || null, req.user.id]
     );
     const clientId = ins.rows[0].id;
 
