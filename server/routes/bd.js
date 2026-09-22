@@ -1,15 +1,14 @@
 const express = require('express');
 const { query } = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
+const { callClaude, SMART_MODEL } = require('../lib/ai');
 
 const router = express.Router();
 
-// Sales stages and the probability each carries for a weighted forecast.
 const OPEN_STAGES = ['Prospecting', 'Qualified', 'Proposal', 'Negotiation'];
 const ALL_STAGES = [...OPEN_STAGES, 'Won', 'Lost'];
 const PROB = { Prospecting: 10, Qualified: 25, Proposal: 50, Negotiation: 75, Won: 100, Lost: 0 };
 
-// An opportunity's "account" is either a real client OR a typed-in prospect.
 const OPP_SELECT = `
   SELECT o.*,
     COALESCE(c.name, o.prospect_name) AS client_name,
@@ -24,30 +23,24 @@ const OPP_SELECT = `
   LEFT JOIN team t    ON t.id = o.owner_id
 `;
 
-function logActivity(action, entityId, details, userId) {
-  // Reuse the CRM's activity_log (columns: user_id, action, entity_type, entity_id, details).
+function logActivity(action, entityType, entityId, details, userId) {
   query(
     `INSERT INTO activity_log (user_id, action, entity_type, entity_id, details)
-     VALUES ($1, $2, 'opportunity', $3, $4)`,
-    [userId || null, action, entityId, JSON.stringify(details || {})]
+     VALUES ($1, $2, $3, $4, $5)`,
+    [userId || null, action, entityType, entityId, JSON.stringify(details || {})]
   ).catch((e) => console.warn('activity_log insert skipped:', e.message));
 }
 
 /* ═══════════════════════ ACCESS ═══════════════════════ */
-// This endpoint is intentionally BEFORE the access guard so any signed-in
-// user can ask whether they personally have BD access (drives the nav link).
 router.get('/my-access', authenticate, async (req, res) => {
   try {
     if (req.user.role === 'Super Admin') return res.json({ access: true });
     const { rows } = await query('SELECT role, bd_access FROM team WHERE id = $1', [req.user.id]);
     const ok = rows.length && (rows[0].role === 'Super Admin' || rows[0].bd_access === true);
     res.json({ access: !!ok });
-  } catch (err) {
-    res.json({ access: false });
-  }
+  } catch (err) { res.json({ access: false }); }
 });
 
-// Gate for everything below: Super Admin, or a team member the admin enabled.
 async function requireBdAccess(req, res, next) {
   try {
     if (req.user.role === 'Super Admin') return next();
@@ -61,41 +54,31 @@ async function requireBdAccess(req, res, next) {
 }
 router.use(authenticate, requireBdAccess);
 
-// Super-Admin-only: list team members with their BD access flag.
-router.get('/access', (req, res, next) => {
+const adminOnly = (req, res, next) => {
   if (req.user.role !== 'Super Admin') return res.status(403).json({ error: 'Super Admin only' });
   next();
-}, async (req, res) => {
+};
+
+router.get('/access', adminOnly, async (req, res) => {
   try {
     const { rows } = await query(
       `SELECT id, name, email, role, COALESCE(bd_access, false) AS bd_access
        FROM team WHERE is_active = true ORDER BY name`
     );
     res.json({ members: rows });
-  } catch (err) {
-    console.error('BD access list error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { console.error('BD access list error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
-// Super-Admin-only: grant / revoke a team member's BD access.
-router.patch('/access/:teamId', (req, res, next) => {
-  if (req.user.role !== 'Super Admin') return res.status(403).json({ error: 'Super Admin only' });
-  next();
-}, async (req, res) => {
+router.patch('/access/:teamId', adminOnly, async (req, res) => {
   try {
     const { bd_access } = req.body;
     await query('UPDATE team SET bd_access = $1 WHERE id = $2', [bd_access === true, req.params.teamId]);
     res.json({ success: true, bd_access: bd_access === true });
-  } catch (err) {
-    console.error('BD access update error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { console.error('BD access update error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
 /* ═══════════════════════ OPPORTUNITIES ═══════════════════════ */
 
-// GET /api/bd/opportunities?stage=&owner_id=&client_id=&search=
 router.get('/opportunities', async (req, res) => {
   try {
     const { stage, owner_id, client_id, search } = req.query;
@@ -112,36 +95,17 @@ router.get('/opportunities', async (req, res) => {
     sql += ' ORDER BY o.value DESC NULLS LAST, o.updated_at DESC';
     const { rows } = await query(sql, params);
     res.json({ opportunities: rows, total: rows.length });
-  } catch (err) {
-    console.error('BD list opportunities error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { console.error('BD list opportunities error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
-// GET /api/bd/opportunities/:id  (detail + recent timeline)
 router.get('/opportunities/:id', async (req, res) => {
   try {
     const { rows } = await query(OPP_SELECT + ' WHERE o.id = $1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
-    let timeline = [];
-    try {
-      const tl = await query(
-        `SELECT a.*, t.name AS user_name
-         FROM activity_log a LEFT JOIN team t ON t.id = a.user_id
-         WHERE a.entity_type = 'opportunity' AND a.entity_id = $1
-         ORDER BY a.created_at DESC LIMIT 30`,
-        [req.params.id]
-      );
-      timeline = tl.rows;
-    } catch (e) { /* timestamp/column shape differs — return empty timeline */ }
-    res.json({ opportunity: rows[0], timeline });
-  } catch (err) {
-    console.error('BD get opportunity error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+    res.json({ opportunity: rows[0] });
+  } catch (err) { console.error('BD get opportunity error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
-// POST /api/bd/opportunities   (existing client OR new prospect)
 router.post('/opportunities', async (req, res) => {
   try {
     const { client_id, prospect_name, title, stage, value, owner_id, source, expected_close, next_step } = req.body;
@@ -153,19 +117,15 @@ router.post('/opportunities', async (req, res) => {
       `INSERT INTO bd_opportunities
          (client_id, prospect_name, title, stage, value, owner_id, source, expected_close, next_step, created_by, last_stage_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW()) RETURNING id`,
-      [client_id || null, client_id ? null : (prospect_name || null).toString().trim(), title.trim(), st,
+      [client_id || null, client_id ? null : String(prospect_name || '').trim(), title.trim(), st,
        value || 0, owner_id || req.user.id, source || null, expected_close || null, next_step || null, req.user.id]
     );
-    logActivity('created', rows[0].id, { title, stage: st }, req.user.id);
+    logActivity('created', 'opportunity', rows[0].id, { title, stage: st }, req.user.id);
     const full = await query(OPP_SELECT + ' WHERE o.id = $1', [rows[0].id]);
     res.status(201).json({ opportunity: full.rows[0] });
-  } catch (err) {
-    console.error('BD create opportunity error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { console.error('BD create opportunity error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
-// PATCH /api/bd/opportunities/:id/stage   { stage, lost_reason? }
 router.patch('/opportunities/:id/stage', async (req, res) => {
   try {
     const { stage, lost_reason } = req.body;
@@ -173,21 +133,15 @@ router.patch('/opportunities/:id/stage', async (req, res) => {
     const prev = await query('SELECT stage FROM bd_opportunities WHERE id = $1', [req.params.id]);
     if (!prev.rows.length) return res.status(404).json({ error: 'Not found' });
     await query(
-      `UPDATE bd_opportunities
-       SET stage = $1, lost_reason = $2, last_stage_at = NOW(), updated_at = NOW()
-       WHERE id = $3`,
+      `UPDATE bd_opportunities SET stage = $1, lost_reason = $2, last_stage_at = NOW(), updated_at = NOW() WHERE id = $3`,
       [stage, stage === 'Lost' ? (lost_reason || null) : null, req.params.id]
     );
-    logActivity('stage_changed', req.params.id, { from: prev.rows[0].stage, to: stage }, req.user.id);
+    logActivity('stage_changed', 'opportunity', req.params.id, { from: prev.rows[0].stage, to: stage }, req.user.id);
     const full = await query(OPP_SELECT + ' WHERE o.id = $1', [req.params.id]);
     res.json({ opportunity: full.rows[0] });
-  } catch (err) {
-    console.error('BD move stage error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { console.error('BD move stage error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
-// PATCH /api/bd/opportunities/:id   (edit fields)
 router.patch('/opportunities/:id', async (req, res) => {
   try {
     const allowed = ['title', 'value', 'owner_id', 'source', 'expected_close', 'next_step', 'notes', 'client_id', 'prospect_name'];
@@ -204,21 +158,175 @@ router.patch('/opportunities/:id', async (req, res) => {
     const full = await query(OPP_SELECT + ' WHERE o.id = $1', [req.params.id]);
     if (!full.rows.length) return res.status(404).json({ error: 'Not found' });
     res.json({ opportunity: full.rows[0] });
-  } catch (err) {
-    console.error('BD edit opportunity error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { console.error('BD edit opportunity error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
-// DELETE /api/bd/opportunities/:id   (managers only)
 router.delete('/opportunities/:id', authorize('Super Admin', 'Account Manager'), async (req, res) => {
   try {
     await query('DELETE FROM bd_opportunities WHERE id = $1', [req.params.id]);
     res.json({ success: true });
+  } catch (err) { console.error('BD delete opportunity error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+/* ═══════════════════════ ACCOUNTS (BD lens on clients) ═══════════════════════ */
+
+// List clients with their BD aggregates.
+router.get('/accounts', async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT c.id, c.name, c.vertical, c.tier,
+        COUNT(o.id) FILTER (WHERE o.stage IN ('Prospecting','Qualified','Proposal','Negotiation'))::int AS open_count,
+        COALESCE(SUM(o.value) FILTER (WHERE o.stage IN ('Prospecting','Qualified','Proposal','Negotiation')),0)::float AS open_value,
+        COUNT(o.id) FILTER (WHERE o.stage = 'Won')::int AS won_count,
+        MAX(o.updated_at) AS last_activity
+       FROM clients c
+       LEFT JOIN bd_opportunities o ON o.client_id = c.id
+       GROUP BY c.id, c.name, c.vertical, c.tier
+       ORDER BY open_value DESC, c.name`
+    );
+    res.json({ accounts: rows });
+  } catch (err) { console.error('BD accounts list error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+// One account: client info, its opportunities, contacts, stats, and timeline.
+router.get('/accounts/:clientId', async (req, res) => {
+  try {
+    const cid = req.params.clientId;
+    const clientRes = await query(
+      `SELECT id, name, vertical, tier, location, status, spoc_name, spoc_role, spoc_email,
+              fee_percent, payment_terms FROM clients WHERE id = $1`, [cid]
+    );
+    if (!clientRes.rows.length) return res.status(404).json({ error: 'Account not found' });
+
+    const oppsRes = await query(OPP_SELECT + ' WHERE o.client_id = $1 ORDER BY o.value DESC NULLS LAST', [cid]);
+    const opps = oppsRes.rows;
+
+    const stats = {
+      openCount: opps.filter((o) => OPEN_STAGES.includes(o.stage)).length,
+      openValue: opps.filter((o) => OPEN_STAGES.includes(o.stage)).reduce((a, o) => a + Number(o.value || 0), 0),
+      wonCount: opps.filter((o) => o.stage === 'Won').length,
+      wonValue: opps.filter((o) => o.stage === 'Won').reduce((a, o) => a + Number(o.value || 0), 0),
+    };
+
+    let contacts = [];
+    try {
+      const cs = await query(
+        `SELECT name, designation, email, is_primary FROM client_spocs WHERE client_id = $1 ORDER BY is_primary DESC, name`, [cid]
+      );
+      contacts = cs.rows;
+    } catch (e) { /* client_spocs shape differs */ }
+
+    let timeline = [];
+    try {
+      const oppIds = opps.map((o) => o.id);
+      const tl = await query(
+        `SELECT a.action, a.entity_type, a.details, a.created_at, t.name AS user_name
+         FROM activity_log a LEFT JOIN team t ON t.id = a.user_id
+         WHERE (a.entity_type = 'client' AND a.entity_id = $1)
+            OR (a.entity_type = 'opportunity' AND a.entity_id = ANY($2::uuid[]))
+         ORDER BY a.created_at DESC LIMIT 40`,
+        [cid, oppIds]
+      );
+      timeline = tl.rows;
+    } catch (e) { /* activity_log shape differs — empty timeline */ }
+
+    res.json({ account: clientRes.rows[0], opportunities: opps, contacts, stats, timeline });
+  } catch (err) { console.error('BD account detail error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+// Log a note onto an account's timeline.
+router.post('/accounts/:clientId/note', async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || !String(text).trim()) return res.status(400).json({ error: 'Note text is required' });
+    logActivity('note', 'client', req.params.clientId, { text: String(text).trim() }, req.user.id);
+    res.status(201).json({ success: true });
+  } catch (err) { console.error('BD account note error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+/* ═══════════════════════ AI STRATEGY BUILDER ═══════════════════════ */
+
+router.post('/strategy', async (req, res) => {
+  try {
+    const { target_name, sector, notes } = req.body;
+    if (!target_name || !String(target_name).trim()) return res.status(400).json({ error: 'Target company name is required' });
+
+    // Ground the playbook in our OWN book of business.
+    const clientsRes = await query(
+      `SELECT name, vertical, tier FROM clients ORDER BY name LIMIT 80`
+    );
+    const rolesRes = await query(
+      `SELECT DISTINCT title FROM jobs WHERE title IS NOT NULL AND title <> '' ORDER BY title LIMIT 60`
+    );
+    const clientList = clientsRes.rows.map((c) => `${c.name}${c.vertical ? ' (' + c.vertical + ')' : ''}`).join('; ') || 'None on record';
+    const roleList = rolesRes.rows.map((r) => r.title).join('; ') || 'General IT & engineering roles';
+
+    const prompt = `You are the head of business development at FX Consulting, an Indian IT & engineering recruitment firm. Build a concise, practical account-based playbook to WIN a new B2B client for our recruitment services: "${target_name.trim()}"${sector ? ` (sector: ${sector})` : ''}. This is B2B sales — winning the company as a client that hires through us. It is NOT about poaching their employees.
+
+OUR EXISTING CLIENTS (use ONLY these real names as proof points — pick the 2 to 4 most comparable to the target's space):
+${clientList}
+
+ROLES WE ACTIVELY RECRUIT FOR:
+${roleList}
+
+${notes ? `EXTRA CONTEXT FROM THE BD LEAD: ${notes}\n` : ''}
+Rules: Be specific and India-context aware. Currency is INR. Do NOT invent statistics or client names not listed above. Keep each text field tight (1-3 sentences). Map roles the target likely hires to roles we already recruit.
+
+Return ONLY valid JSON, no prose, in exactly this shape:
+{
+  "target": "${target_name.trim()}",
+  "sector": "best guess of the target's sector",
+  "hypothesis": "why they are likely hiring now and where our help fits (2-3 sentences)",
+  "positioning": "our tailored value proposition for this target (2-3 sentences)",
+  "proof_points": [{"client": "one of our real clients above", "relevance": "why this makes us credible for the target"}],
+  "roles_to_target": ["specific role titles the target likely hires that we staff"],
+  "stakeholders": [{"title": "role to reach e.g. VP Talent Acquisition", "why": "why they matter", "approach": "how to open"}],
+  "outreach_sequence": [{"step": 1, "channel": "LinkedIn/Email/Referral/Call", "angle": "the message angle"}],
+  "objections": [{"objection": "a likely pushback", "response": "how we answer it"}],
+  "first_meeting_goals": ["what a first meeting should achieve"],
+  "suggested_opportunities": [{"title": "a concrete mandate to pursue", "rationale": "why"}]
+}`;
+
+    const result = await callClaude(prompt, { model: SMART_MODEL, maxTokens: 4000 });
+    if (result === null) return res.status(503).json({ error: 'AI is not configured on the server (missing API key).' });
+    if (typeof result === 'string') return res.status(502).json({ error: 'The AI returned an unexpected response. Please try again.' });
+
+    const saved = await query(
+      `INSERT INTO bd_playbooks (target_name, sector, playbook, created_by)
+       VALUES ($1,$2,$3,$4) RETURNING id, target_name, sector, playbook, created_at`,
+      [target_name.trim(), sector || result.sector || null, JSON.stringify(result), req.user.id]
+    );
+    res.status(201).json({ playbook: saved.rows[0] });
   } catch (err) {
-    console.error('BD delete opportunity error:', err);
-    res.status(500).json({ error: 'Server error' });
+    console.error('BD strategy error:', err);
+    res.status(500).json({ error: 'Could not generate the playbook. Please try again.' });
   }
+});
+
+router.get('/playbooks', async (req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT p.id, p.target_name, p.sector, p.created_at, t.name AS created_by_name
+       FROM bd_playbooks p LEFT JOIN team t ON t.id = p.created_by
+       ORDER BY p.created_at DESC LIMIT 100`
+    );
+    res.json({ playbooks: rows });
+  } catch (err) { console.error('BD playbooks list error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+router.get('/playbooks/:id', async (req, res) => {
+  try {
+    const { rows } = await query('SELECT * FROM bd_playbooks WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ playbook: rows[0] });
+  } catch (err) { console.error('BD playbook get error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+router.delete('/playbooks/:id', async (req, res) => {
+  try {
+    await query('DELETE FROM bd_playbooks WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) { console.error('BD playbook delete error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
 /* ═══════════════════════ TASKS ═══════════════════════ */
@@ -252,10 +360,7 @@ router.get('/tasks', async (req, res) => {
       r.bucket = d < today ? 'Overdue' : (d.getTime() === today.getTime() ? 'Today' : 'Upcoming');
     }
     res.json({ tasks: rows, total: rows.length });
-  } catch (err) {
-    console.error('BD list tasks error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { console.error('BD list tasks error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
 router.post('/tasks', async (req, res) => {
@@ -268,10 +373,7 @@ router.post('/tasks', async (req, res) => {
       [title.trim(), opportunity_id || null, client_id || null, owner_id || req.user.id, due_date || null, req.user.id]
     );
     res.status(201).json({ id: rows[0].id });
-  } catch (err) {
-    console.error('BD create task error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { console.error('BD create task error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
 router.patch('/tasks/:id/toggle', async (req, res) => {
@@ -284,23 +386,17 @@ router.patch('/tasks/:id/toggle', async (req, res) => {
       [nd, nd ? req.user.id : null, nd ? new Date() : null, req.params.id]
     );
     res.json({ done: nd });
-  } catch (err) {
-    console.error('BD toggle task error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { console.error('BD toggle task error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
 router.delete('/tasks/:id', async (req, res) => {
   try {
     await query('DELETE FROM bd_tasks WHERE id = $1', [req.params.id]);
     res.json({ success: true });
-  } catch (err) {
-    console.error('BD delete task error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { console.error('BD delete task error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
-/* ═══════════════════════ OVERVIEW (dashboard KPIs) ═══════════════════════ */
+/* ═══════════════════════ OVERVIEW ═══════════════════════ */
 
 router.get('/overview', async (req, res) => {
   try {
@@ -334,12 +430,9 @@ router.get('/overview', async (req, res) => {
 
     let placedRevenue = 0;
     try {
-      const pr = await query(
-        `SELECT COALESCE(SUM(fee_amount),0)::float AS total FROM placements WHERE joining_date >= $1`,
-        [since]
-      );
+      const pr = await query(`SELECT COALESCE(SUM(fee_amount),0)::float AS total FROM placements WHERE joining_date >= $1`, [since]);
       placedRevenue = pr.rows[0].total;
-    } catch (e) { /* placements shape differs — leave at 0 */ }
+    } catch (e) { /* placements shape differs */ }
 
     const topOpps = await query(
       OPP_SELECT + ` WHERE o.stage IN ('Prospecting','Qualified','Proposal','Negotiation')
@@ -356,16 +449,11 @@ router.get('/overview', async (req, res) => {
     );
 
     res.json({
-      period, stages,
-      openValue, openCount, weighted,
-      wonCount: won.count, wonValue: won.value,
-      lostCount: lost.count, winRate, placedRevenue,
+      period, stages, openValue, openCount, weighted,
+      wonCount: won.count, wonValue: won.value, lostCount: lost.count, winRate, placedRevenue,
       topOpportunities: topOpps.rows, tasksDue: tasksDue.rows,
     });
-  } catch (err) {
-    console.error('BD overview error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  } catch (err) { console.error('BD overview error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
 module.exports = router;

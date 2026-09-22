@@ -108,6 +108,19 @@ export const api = {
       update: (id: string, data: any) => apiFetch(`/api/bd/opportunities/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
       remove: (id: string) => apiFetch(`/api/bd/opportunities/${id}`, { method: 'DELETE' }),
     },
+    accounts: {
+      list: () => apiFetch('/api/bd/accounts'),
+      get: (id: string) => apiFetch(`/api/bd/accounts/${id}`),
+      addNote: (id: string, text: string) =>
+        apiFetch(`/api/bd/accounts/${id}/note`, { method: 'POST', body: JSON.stringify({ text }) }),
+    },
+    strategy: (data: { target_name: string; sector?: string; notes?: string }) =>
+      apiFetch('/api/bd/strategy', { method: 'POST', body: JSON.stringify(data) }),
+    playbooks: {
+      list: () => apiFetch('/api/bd/playbooks'),
+      get: (id: string) => apiFetch(`/api/bd/playbooks/${id}`),
+      remove: (id: string) => apiFetch(`/api/bd/playbooks/${id}`, { method: 'DELETE' }),
+    },
     tasks: {
       list: (params?: string) => apiFetch(`/api/bd/tasks${params ? `?${params}` : ''}`),
       create: (data: any) => apiFetch('/api/bd/tasks', { method: 'POST', body: JSON.stringify(data) }),
