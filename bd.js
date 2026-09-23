@@ -1,7 +1,7 @@
 const express = require('express');
 const { query } = require('../db');
 const { authenticate, authorize } = require('../middleware/auth');
-const { callClaude, SMART_MODEL } = require('../lib/ai');
+const { callClaude, SMART_MODEL, FAST_MODEL } = require('../lib/ai');
 
 const router = express.Router();
 
@@ -541,6 +541,31 @@ router.delete('/playbooks/:id', async (req, res) => {
     await query('DELETE FROM bd_playbooks WHERE id = $1', [req.params.id]);
     res.json({ success: true });
   } catch (err) { console.error('BD playbook delete error:', err); res.status(500).json({ error: 'Server error' }); }
+});
+
+// Draft a ready-to-send first-touch message from a playbook.
+router.post('/strategy/:playbookId/draft', async (req, res) => {
+  try {
+    const { channel, angle, stakeholder } = req.body;
+    const pb = await query('SELECT target_name, sector, playbook FROM bd_playbooks WHERE id = $1', [req.params.playbookId]);
+    if (!pb.rows.length) return res.status(404).json({ error: 'Playbook not found' });
+    const p = pb.rows[0];
+    const data = p.playbook || {};
+    const proof = (Array.isArray(data.proof_points) ? data.proof_points : []).map((x) => x && x.client).filter(Boolean).slice(0, 4).join(', ') || 'leading clients in similar sectors';
+    let me = 'Your name';
+    try { const u = await query('SELECT name FROM team WHERE id = $1', [req.user.id]); if (u.rows.length) me = u.rows[0].name; } catch (e) {}
+    const ch = channel || 'Email';
+    const prompt = `You are ${me}, a business-development executive at FX Consulting, an India-based IT & engineering recruitment firm. Write a concise, professional first-touch ${ch} to ${stakeholder || 'the talent-acquisition leader'} at ${p.target_name}${p.sector ? ' (' + p.sector + ')' : ''}.
+Angle / goal of this message: ${angle || 'open a conversation about how we can help them hire'}
+Our positioning: ${data.positioning || 'We place hard-to-find IT and engineering talent quickly and reliably.'}
+Proof points — real clients we already serve: ${proof}
+Rules: keep it short (90-130 words for an email; 2-3 tight lines for LinkedIn / InMail / a call opener), specific and warm, no invented statistics, natural Indian B2B tone, and end with a soft ask for a 15-minute intro call. Sign off as "${me}, FX Consulting".
+Return ONLY valid JSON: {"subject": "a short subject line", "body": "the message text, with line breaks"}`;
+    const result = await callClaude(prompt, { model: FAST_MODEL, maxTokens: 900 });
+    if (result === null) return res.status(503).json({ error: 'AI is not configured on the server.' });
+    if (typeof result === 'string') return res.status(502).json({ error: 'The AI returned an unexpected response. Please try again.' });
+    res.json({ subject: result.subject || '', body: result.body || '' });
+  } catch (err) { console.error('BD draft message error:', err); res.status(500).json({ error: 'Server error' }); }
 });
 
 /* ═══════════════════════ TASKS ═══════════════════════ */

@@ -133,6 +133,8 @@ export const api = {
     },
     strategy: (data: { target_name: string; sector?: string; notes?: string }) =>
       apiFetch('/api/bd/strategy', { method: 'POST', body: JSON.stringify(data) }),
+    draftEmail: (playbookId: string, data: { channel?: string; angle?: string; stakeholder?: string }) =>
+      apiFetch<{ subject: string; body: string }>(`/api/bd/strategy/${playbookId}/draft`, { method: 'POST', body: JSON.stringify(data) }),
     playbooks: {
       list: () => apiFetch('/api/bd/playbooks'),
       get: (id: string) => apiFetch(`/api/bd/playbooks/${id}`),
