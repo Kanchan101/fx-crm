@@ -55,6 +55,7 @@ export const api = {
     get: (id: string) => apiFetch(`/api/clients/${id}`),
     create: (data: any) => apiFetch('/api/clients', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: string, data: any) => apiFetch(`/api/clients/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    remove: (id: string) => apiFetch(`/api/clients/${id}`, { method: 'DELETE' }),
   },
   requirements: {
     list: (params?: string) => apiFetch(`/api/requirements${params ? `?${params}` : ''}`),
@@ -90,6 +91,7 @@ export const api = {
   team: {
     list: () => apiFetch('/api/team'),
     get: (id: string) => apiFetch(`/api/team/${id}`),
+    remove: (id: string) => apiFetch(`/api/team/${id}`, { method: 'DELETE' }),
   },
   bd: {
     overview: (params?: string) => apiFetch(`/api/bd/overview${params ? `?${params}` : ''}`),
@@ -133,6 +135,8 @@ export const api = {
     },
     strategy: (data: { target_name: string; sector?: string; notes?: string }) =>
       apiFetch('/api/bd/strategy', { method: 'POST', body: JSON.stringify(data) }),
+    draftEmail: (playbookId: string, data: { channel?: string; angle?: string; stakeholder?: string }) =>
+      apiFetch<{ subject: string; body: string }>(`/api/bd/strategy/${playbookId}/draft`, { method: 'POST', body: JSON.stringify(data) }),
     playbooks: {
       list: () => apiFetch('/api/bd/playbooks'),
       get: (id: string) => apiFetch(`/api/bd/playbooks/${id}`),
