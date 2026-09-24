@@ -149,6 +149,9 @@ router.delete('/:id', authenticate, authorize('Super Admin'), async (req, res) =
 
     res.json({ message: 'Client deleted' });
   } catch (err) {
+    if (err && err.code === '23503') {
+      return res.status(409).json({ error: 'This client has linked jobs or candidates. Remove or reassign those first, or set the client to Inactive instead.' });
+    }
     console.error('Delete client error:', err);
     res.status(500).json({ error: 'Server error' });
   }
