@@ -168,12 +168,12 @@ export default function ClientsPage() {
   };
 
   const handleDelete = async (client: Client) => {
-    if (!confirm(`Delete "${client.name}"? This will also delete all their positions.`)) return;
+    if (!confirm(`Permanently delete "${client.name}"? This cannot be undone.`)) return;
     try {
-      await api.clients.update(client.id, { ...client, status: 'Inactive' });
+      await api.clients.remove(client.id);
       fetchClients();
     } catch (err: any) {
-      alert(err.message);
+      alert(err.message || 'Could not delete this client.');
     }
   };
 
@@ -262,6 +262,13 @@ export default function ClientsPage() {
                     <button onClick={(e) => { e.stopPropagation(); openEdit(client); }}
                       className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center transition-colors">
                       <Edit2 className="w-3.5 h-3.5 text-gray-400" />
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button onClick={(e) => { e.stopPropagation(); handleDelete(client); }}
+                      title="Delete client"
+                      className="w-8 h-8 rounded-lg hover:bg-red-50 flex items-center justify-center transition-colors group/del">
+                      <Trash2 className="w-3.5 h-3.5 text-gray-400 group-hover/del:text-red-500" />
                     </button>
                   )}
                   <ChevronDown className={clsx('w-4 h-4 text-gray-400 transition-transform', expandedId === client.id && 'rotate-180')} />
