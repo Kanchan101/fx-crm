@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { api } from '@/lib/api';
 import {
-  UserCog, Plus, Shield, Briefcase, Users, X, Edit2,
+  UserCog, Plus, Shield, Briefcase, Users, X, Edit2, Trash2,
   CheckCircle2, XCircle, Clock, BarChart3,
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -59,6 +59,20 @@ export default function TeamPage() {
     setForm(emptyForm);
     setError('');
     setShowModal(true);
+  };
+
+  const handleDelete = async (member: TeamMember) => {
+    if (member.id === user?.id) { alert("You can't delete your own account."); return; }
+    if (!confirm(`Remove "${member.name}" from the team? This cannot be undone.`)) return;
+    try {
+      const res: any = await api.team.remove(member.id);
+      if (res?.deactivated) {
+        alert(`${member.name} has historical records, so they were deactivated (kept for reporting) instead of being fully deleted.`);
+      }
+      fetchTeam();
+    } catch (err: any) {
+      alert(err.message || 'Could not remove this team member.');
+    }
   };
 
   const openEdit = (member: TeamMember) => {
@@ -177,10 +191,16 @@ export default function TeamPage() {
                     <div key={member.id}
                       className="bg-white rounded-xl border border-gray-100 p-5 hover:shadow-md transition-shadow relative group">
                       {isSuperAdmin && member.id !== user?.id && (
-                        <button onClick={() => openEdit(member)}
-                          className="absolute top-3 right-3 w-7 h-7 rounded-lg bg-gray-50 hover:bg-gray-100 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Edit2 className="w-3 h-3 text-gray-400" />
-                        </button>
+                        <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => openEdit(member)} title="Edit"
+                            className="w-7 h-7 rounded-lg bg-gray-50 hover:bg-gray-100 flex items-center justify-center">
+                            <Edit2 className="w-3 h-3 text-gray-400" />
+                          </button>
+                          <button onClick={() => handleDelete(member)} title="Remove"
+                            className="w-7 h-7 rounded-lg bg-gray-50 hover:bg-red-50 flex items-center justify-center group/del">
+                            <Trash2 className="w-3 h-3 text-gray-400 group-hover/del:text-red-500" />
+                          </button>
+                        </div>
                       )}
                       <div className="flex items-center gap-3 mb-4">
                         <div className="w-10 h-10 rounded-full bg-fx-100 text-fx-700 flex items-center justify-center text-sm font-semibold">
