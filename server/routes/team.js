@@ -112,4 +112,34 @@ router.put('/:id', authenticate, authorize('Super Admin'), async (req, res) => {
   }
 });
 
+// DELETE /api/team/:id — remove team member (Super Admin only)
+router.delete('/:id', authenticate, authorize('Super Admin'), async (req, res) => {
+  try {
+    if (String(req.params.id) === String(req.user.id)) {
+      return res.status(400).json({ error: "You can't delete your own account" });
+    }
+    const info = await query('SELECT name FROM team WHERE id = $1', [req.params.id]);
+    if (info.rows.length === 0) return res.status(404).json({ error: 'Team member not found' });
+
+    try {
+      await query('DELETE FROM team WHERE id = $1', [req.params.id]);
+      await query(
+        'INSERT INTO activity_log (user_id, action, entity_type, entity_id, details) VALUES ($1,$2,$3,$4,$5)',
+        [req.user.id, 'DELETE', 'team', req.params.id, JSON.stringify({ name: info.rows[0].name })]
+      );
+      return res.json({ message: 'Team member deleted' });
+    } catch (e) {
+      // Member has linked records (jobs, placements, activity). Preserve history by deactivating.
+      if (e && e.code === '23503') {
+        await query('UPDATE team SET is_active = false, updated_at = NOW() WHERE id = $1', [req.params.id]);
+        return res.json({ message: 'Team member deactivated', deactivated: true });
+      }
+      throw e;
+    }
+  } catch (err) {
+    console.error('Delete team member error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 module.exports = router;
