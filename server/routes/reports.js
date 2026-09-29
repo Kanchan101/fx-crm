@@ -43,8 +43,11 @@ router.get('/team-performance', authenticate, async (req, res) => {
   try {
     const { date_from, date_to } = req.query;
     let dateFilter = '';
+    let ivDate = '';
     const params = [];
     let idx = 1;
+    if (date_from) { ivDate += ` AND iv.interview_date >= $${idx++}`; params.push(date_from); }
+    if (date_to) { ivDate += ` AND iv.interview_date <= $${idx++}`; params.push(date_to); }
     if (date_from) { dateFilter += ` AND p.created_at >= $${idx++}`; params.push(date_from); }
     if (date_to) { dateFilter += ` AND p.created_at <= $${idx++}`; params.push(date_to + 'T23:59:59'); }
 
@@ -55,7 +58,9 @@ router.get('/team-performance', authenticate, async (req, res) => {
         COUNT(DISTINCT CASE WHEN p.status = 'AM Review Pending' THEN p.id END) as am_review_pending,
         COUNT(DISTINCT CASE WHEN p.status = 'AM Review Select' THEN p.id END) as am_review_select,
         COUNT(DISTINCT CASE WHEN p.status = 'Client Review Pending' THEN p.id END) as client_review,
-        COUNT(DISTINCT CASE WHEN p.status = 'Interview' THEN p.id END) as interviews,
+        (SELECT COUNT(*) FROM interviews iv
+           JOIN candidates c2 ON c2.id = iv.candidate_id
+           WHERE c2.owner_id = t.id AND COALESCE(iv.outcome, '') <> 'Cancelled'${ivDate}) as interviews,
         COUNT(DISTINCT CASE WHEN p.status = 'Offered' THEN p.id END) as offered,
         COUNT(DISTINCT CASE WHEN p.status = 'Joined' THEN p.id END) as joined,
         COUNT(DISTINCT CASE WHEN p.status = 'Rejected' THEN p.id END) as rejected,
