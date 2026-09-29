@@ -325,6 +325,21 @@ router.put('/:id', authenticate, async (req, res) => {
        assessment_soft_skills || null, assessment_stability || null,
        assessment_technical || null, assessment_experience || null, req.params.id]
     );
+
+    // "Map to Requirement" from the edit form: add the candidate to that requirement's
+    // pipeline if not already mapped. Existing mappings are left untouched.
+    if (req.body.job_id) {
+      try {
+        const exists = await query('SELECT id FROM pipeline WHERE candidate_id = $1 AND job_id = $2 LIMIT 1', [req.params.id, req.body.job_id]);
+        if (!exists.rows.length) {
+          await query('INSERT INTO pipeline (candidate_id, job_id, status, updated_by) VALUES ($1,$2,$3,$4)',
+            [req.params.id, req.body.job_id, 'AM Review Pending', req.user.id]);
+          await query('INSERT INTO candidate_status_history (candidate_id, job_id, new_status, changed_by) VALUES ($1,$2,$3,$4)',
+            [req.params.id, req.body.job_id, 'AM Review Pending', req.user.id]);
+        }
+      } catch (e) { console.warn('Map-to-requirement on edit skipped:', e.message); }
+    }
+
     res.json({ candidate: result.rows[0] });
   } catch (err) { console.error('Update candidate error:', err); res.status(500).json({ error: 'Server error' }); }
 });
