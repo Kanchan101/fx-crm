@@ -46,6 +46,31 @@ router.post('/', authenticate, async (req, res) => {
       [candidate_id, job_id, pipeline_id || null, interview_date, interview_time || null, type, mode, interviewer_name, meeting_link, notes, req.user.id]
     );
 
+    // Keep the pipeline in sync: booking an interview advances the candidate to the
+    // 'Interview' stage (only from an earlier stage — never downgrade Offered/Joined).
+    try {
+      let pipeRow = null;
+      if (pipeline_id) {
+        const r = await query('SELECT * FROM pipeline WHERE id = $1', [pipeline_id]);
+        pipeRow = r.rows[0];
+      } else {
+        const r = await query('SELECT * FROM pipeline WHERE candidate_id = $1 AND job_id = $2 ORDER BY created_at DESC LIMIT 1', [candidate_id, job_id]);
+        pipeRow = r.rows[0];
+      }
+      const preStages = ['AM Review Pending', 'AM Review Select', 'Client Review Pending'];
+      if (pipeRow && preStages.includes(pipeRow.status)) {
+        await query('UPDATE pipeline SET status = $1, updated_by = $2, updated_at = NOW() WHERE id = $3', ['Interview', req.user.id, pipeRow.id]);
+        await query(
+          'INSERT INTO candidate_status_history (pipeline_id,candidate_id,job_id,old_status,new_status,changed_by) VALUES ($1,$2,$3,$4,$5,$6)',
+          [pipeRow.id, pipeRow.candidate_id, pipeRow.job_id, pipeRow.status, 'Interview', req.user.id]
+        );
+        await query(
+          'INSERT INTO activity_log (user_id,action,entity_type,entity_id,details) VALUES ($1,$2,$3,$4,$5)',
+          [req.user.id, 'STATUS_CHANGE', 'pipeline', pipeRow.id, JSON.stringify({ from: pipeRow.status, to: 'Interview', via: 'interview_booked' })]
+        );
+      }
+    } catch (e) { console.warn('Pipeline advance on interview booking skipped:', e.message); }
+
     res.status(201).json({ interview: result.rows[0] });
   } catch (err) {
     console.error('Create interview error:', err);
