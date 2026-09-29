@@ -34,6 +34,12 @@ export default function CandidateDetailPage() {
   const [editForm, setEditForm] = useState<any>({});
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('details');
+  const [requirements, setRequirements] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch(`${API}/api/requirements?status=Open`, { headers: { Authorization: `Bearer ${getToken()}` } })
+      .then(r => r.json()).then(d => setRequirements(d.requirements || [])).catch(() => {});
+  }, []);
 
   const fetchCandidate = useCallback(async () => {
     try {
@@ -140,6 +146,20 @@ export default function CandidateDetailPage() {
           </div>
         )}
       </div>
+
+      {isEditing && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl px-5 py-3">
+          <label className="block text-xs font-semibold text-blue-800 uppercase tracking-wider mb-1.5">Map to Requirement</label>
+          <select value={editForm.job_id || ''} onChange={(e) => setEditForm({ ...editForm, job_id: e.target.value })}
+            className="w-full px-3 py-2 border border-blue-200 rounded-lg text-sm bg-white">
+            <option value="">Select a requirement to map this candidate to…</option>
+            {requirements.map((r: any) => (
+              <option key={r.id} value={r.id}>{r.title}{r.client_name ? ` — ${r.client_name}` : ''}{r.location ? ` (${r.location})` : ''}</option>
+            ))}
+          </select>
+          <p className="text-[11px] text-blue-600 mt-1">Pick a requirement and click Save — the candidate is added to that requirement's pipeline. Any existing mappings stay.</p>
+        </div>
+      )}
 
       {/* Contact bar */}
       <div className="flex items-center gap-4 bg-white rounded-xl border border-gray-100 px-5 py-3">
