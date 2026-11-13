@@ -69,6 +69,10 @@ router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), asyn
     const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' });
     const hs = 'padding: 10px; font-size: 11px; font-weight: 700; color: white; background: #d97706; text-transform: uppercase; white-space: nowrap; border: 1px solid #b45309;';
 
+    const esc = (v) => String(v == null ? '' : v)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/\r?\n/g, '<br/>');
+
     let tableRows = '';
     candidates.rows.forEach(c => {
       const ctcParts = [];
@@ -76,7 +80,11 @@ router.post('/', authenticate, authorize('Super Admin', 'Account Manager'), asyn
       if (c.current_ctc_variable) ctcParts.push('+ ' + c.current_ctc_variable + ' LPA Var');
       const ctcStr = ctcParts.length > 0 ? ctcParts.join(' ') : '-';
       const ectc = c.expected_ctc_fixed ? c.expected_ctc_fixed + ' LPA' : '-';
-      const remark = c.holding_offer ? (c.holding_offer_details || 'Holding Offer') : 'No Offer';
+      // Remark column: recruiter's own remark first, then holding-offer status, else "No Offer"
+      const remarkParts = [];
+      if (c.remarks && String(c.remarks).trim()) remarkParts.push(esc(String(c.remarks).trim()));
+      if (c.holding_offer) remarkParts.push(c.holding_offer_details ? `Holding Offer: ${esc(c.holding_offer_details)}` : 'Holding Offer');
+      const remark = remarkParts.length ? remarkParts.join('<br/>') : 'No Offer';
       const rs = 'padding: 8px 10px; font-size: 12px; color: #374151; border: 1px solid #e5e7eb;';
 
       tableRows += `<tr>
