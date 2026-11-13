@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { getToken } from '@/lib/api';
-import { Calendar, Plus, X, Video, MapPin, Clock, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Video, MapPin, Clock, ChevronLeft, ChevronRight, MessageSquare } from 'lucide-react';
 import clsx from 'clsx';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
@@ -12,13 +12,17 @@ interface Interview {
   job_title: string; client_name: string; interview_date: string; interview_time: string;
   type: string; mode: string; interviewer_name: string; meeting_link: string;
   notes: string; outcome: string; scheduled_by_name: string;
+  followup_status: string; followup_remark: string;
 }
 
 const OUTCOMES = ['Scheduled','Completed','Cancelled','No Show','Passed','Failed'];
+const FOLLOWUPS = ['Pending','Confirmed','No Show','Not Responding','Rescheduled'];
 
 export default function InterviewsPage() {
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [loading, setLoading] = useState(true);
+  const [remarkDrafts, setRemarkDrafts] = useState<Record<string, string>>({});
+  const [openRemark, setOpenRemark] = useState<string | null>(null);
   const [weekStart, setWeekStart] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay() + 1);
     return d.toISOString().split('T')[0];
@@ -49,10 +53,20 @@ export default function InterviewsPage() {
 
   const updateOutcome = async (id: string, outcome: string) => {
     try {
-      await fetch(`${API}/api/interviews/${id}`, {
-        method: 'PATCH', headers: headers(), body: JSON.stringify({ outcome }),
-      });
-      fetchInterviews();
+      await fetch(`${API}/api/interviews/${id}`, { method: 'PATCH', headers: headers(), body: JSON.stringify({ outcome }) });
+      setInterviews((list) => list.map((i) => i.id === id ? { ...i, outcome } : i));
+    } catch (err) { console.error(err); }
+  };
+
+  const updateFollowup = async (id: string, patch: { followup_status?: string; followup_remark?: string }) => {
+    const current = interviews.find((i) => i.id === id);
+    const body = {
+      followup_status: patch.followup_status !== undefined ? patch.followup_status : (current?.followup_status || ''),
+      followup_remark: patch.followup_remark !== undefined ? patch.followup_remark : (current?.followup_remark || ''),
+    };
+    try {
+      await fetch(`${API}/api/interviews/${id}/followup`, { method: 'PATCH', headers: headers(), body: JSON.stringify(body) });
+      setInterviews((list) => list.map((i) => i.id === id ? { ...i, ...body } : i));
     } catch (err) { console.error(err); }
   };
 
@@ -64,6 +78,11 @@ export default function InterviewsPage() {
   const outcomeColor = (o: string) => {
     const m: Record<string, string> = { Scheduled: 'bg-blue-100 text-blue-700', Completed: 'bg-gray-100 text-gray-600', Passed: 'bg-emerald-100 text-emerald-700', Failed: 'bg-red-100 text-red-700', Cancelled: 'bg-yellow-100 text-yellow-700', 'No Show': 'bg-orange-100 text-orange-700' };
     return m[o] || 'bg-gray-100 text-gray-600';
+  };
+
+  const followupColor = (f: string) => {
+    const m: Record<string, string> = { Confirmed: 'bg-green-100 text-green-700', 'No Show': 'bg-red-100 text-red-700', 'Not Responding': 'bg-orange-100 text-orange-700', Rescheduled: 'bg-amber-100 text-amber-700' };
+    return m[f] || 'bg-gray-50 text-gray-500';
   };
 
   const weekLabel = () => {
@@ -112,7 +131,7 @@ export default function InterviewsPage() {
                       )}
                       {iv.mode && (
                         <p className="text-gray-400 mt-0.5 flex items-center gap-1">
-                          {iv.mode === 'Google Meet' ? <Video className="w-3 h-3" /> : <MapPin className="w-3 h-3" />}{iv.mode}
+                          {iv.mode === 'Google Meet' || iv.mode === 'Video Call' ? <Video className="w-3 h-3" /> : <MapPin className="w-3 h-3" />}{iv.mode}
                         </p>
                       )}
                       <div className="mt-1.5">
@@ -120,6 +139,35 @@ export default function InterviewsPage() {
                           className={clsx('w-full text-[10px] px-1.5 py-0.5 rounded font-medium border-0', outcomeColor(iv.outcome))}>
                           {OUTCOMES.map(o => <option key={o} value={o}>{o}</option>)}
                         </select>
+                      </div>
+
+                      {/* Follow-up */}
+                      <div className="mt-1.5 pt-1.5 border-t border-dashed border-gray-100">
+                        <p className="text-[9px] uppercase tracking-wide text-gray-300 mb-1">Follow-up</p>
+                        <div className="flex items-center gap-1">
+                          <select value={iv.followup_status || 'Pending'} onChange={(e) => updateFollowup(iv.id, { followup_status: e.target.value === 'Pending' ? '' : e.target.value })}
+                            className={clsx('flex-1 text-[10px] px-1.5 py-0.5 rounded font-medium border-0', followupColor(iv.followup_status))}>
+                            {FOLLOWUPS.map(f => <option key={f} value={f}>{f}</option>)}
+                          </select>
+                          <button onClick={() => { setOpenRemark(openRemark === iv.id ? null : iv.id); setRemarkDrafts((d) => ({ ...d, [iv.id]: iv.followup_remark || '' })); }}
+                            title={iv.followup_remark || 'Add remark'}
+                            className={clsx('w-6 h-6 rounded flex items-center justify-center shrink-0', iv.followup_remark ? 'text-fx-600 bg-fx-50' : 'text-gray-300 hover:text-gray-500')}>
+                            <MessageSquare className="w-3 h-3" />
+                          </button>
+                        </div>
+                        {openRemark === iv.id && (
+                          <div className="mt-1">
+                            <textarea
+                              value={remarkDrafts[iv.id] ?? ''}
+                              onChange={(e) => setRemarkDrafts((d) => ({ ...d, [iv.id]: e.target.value }))}
+                              onBlur={() => { updateFollowup(iv.id, { followup_remark: remarkDrafts[iv.id] || '' }); setOpenRemark(null); }}
+                              rows={2} autoFocus placeholder="Reason / remark…"
+                              className="w-full text-[10px] px-1.5 py-1 rounded border border-gray-200 resize-none focus:ring-1 focus:ring-fx-600/30 outline-none" />
+                          </div>
+                        )}
+                        {openRemark !== iv.id && iv.followup_remark && (
+                          <p className="text-[10px] text-gray-500 mt-1 line-clamp-2">{iv.followup_remark}</p>
+                        )}
                       </div>
                     </div>
                   ))}
