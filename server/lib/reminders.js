@@ -3,7 +3,6 @@
 // scheduled for that day gets one email listing them, with a nudge to
 // follow up and update the follow-up status in the CRM.
 
-const cron = require('node-cron');
 const { Resend } = require('resend');
 const { query } = require('../db');
 
@@ -151,6 +150,7 @@ async function sendDailyInterviewReminders() {
 }
 
 function startReminderScheduler() {
+  const cron = require('node-cron'); // lazy-loaded so a missing dep can't crash server boot
   // 9:20 AM every day, India time
   cron.schedule('20 9 * * *', () => {
     console.log('[Reminders] Daily 9:20 AM IST trigger');
