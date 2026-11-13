@@ -1,6 +1,7 @@
 const express = require('express');
 const { query } = require('../db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorize } = require('../middleware/auth');
+const { sendDailyInterviewReminders } = require('../lib/reminders');
 
 const router = express.Router();
 
@@ -89,6 +90,35 @@ router.patch('/:id', authenticate, async (req, res) => {
     res.json({ interview: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Follow-up status + remark (Confirmed / No Show / Not Responding / Rescheduled)
+router.patch('/:id/followup', authenticate, async (req, res) => {
+  try {
+    const { followup_status, followup_remark } = req.body;
+    const result = await query(
+      `UPDATE interviews SET followup_status=$1, followup_remark=$2,
+         followup_updated_at=NOW(), followup_updated_by=$3, updated_at=NOW()
+       WHERE id=$4 RETURNING *`,
+      [followup_status || null, followup_remark || null, req.user.id, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
+    res.json({ interview: result.rows[0] });
+  } catch (err) {
+    console.error('Follow-up update error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Manual trigger to send today's reminder emails now (for testing)
+router.post('/send-reminders-now', authenticate, authorize('Super Admin'), async (req, res) => {
+  try {
+    const summary = await sendDailyInterviewReminders();
+    res.json({ success: true, ...summary });
+  } catch (err) {
+    console.error('Manual reminder send error:', err);
+    res.status(500).json({ error: err.message || 'Server error' });
   }
 });
 
