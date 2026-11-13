@@ -277,8 +277,8 @@ router.post('/', authenticate, async (req, res) => {
     console.log('[Candidate] Saving:', b.name, 'cv_storage_path:', b.cv_storage_path || 'NONE');
     const result = await transaction(async (client) => {
       const cr = await client.query(
-        'INSERT INTO candidates (name, email, phone, location, experience_years, skills, "current_role", current_company, education, current_ctc_fixed, current_ctc_variable, expected_ctc_fixed, expected_ctc_variable, notice_period, last_working_day, holding_offer, holding_offer_details, referral_name, referral_phone, referral_bonus_eligible, assessment_soft_skills, assessment_stability, assessment_technical, assessment_experience, cv_text, cv_url, owner_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27) RETURNING *',
-        [b.name, b.email, b.phone, b.location, b.experience_years || null, b.skills, b.current_role, b.current_company, b.education, b.current_ctc_fixed || null, b.current_ctc_variable || null, b.expected_ctc_fixed || null, b.expected_ctc_variable || null, b.notice_period, b.last_working_day || null, b.holding_offer || false, b.holding_offer_details, b.referral_name, b.referral_phone, b.referral_bonus_eligible || false, b.assessment_soft_skills || null, b.assessment_stability || null, b.assessment_technical || null, b.assessment_experience || null, safeCvText, b.cv_storage_path || null, req.user.id]
+        'INSERT INTO candidates (name, email, phone, location, experience_years, skills, "current_role", current_company, education, current_ctc_fixed, current_ctc_variable, expected_ctc_fixed, expected_ctc_variable, notice_period, last_working_day, holding_offer, holding_offer_details, referral_name, referral_phone, referral_bonus_eligible, assessment_soft_skills, assessment_stability, assessment_technical, assessment_experience, cv_text, cv_url, owner_id, remarks) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28) RETURNING *',
+        [b.name, b.email, b.phone, b.location, b.experience_years || null, b.skills, b.current_role, b.current_company, b.education, b.current_ctc_fixed || null, b.current_ctc_variable || null, b.expected_ctc_fixed || null, b.expected_ctc_variable || null, b.notice_period, b.last_working_day || null, b.holding_offer || false, b.holding_offer_details, b.referral_name, b.referral_phone, b.referral_bonus_eligible || false, b.assessment_soft_skills || null, b.assessment_stability || null, b.assessment_technical || null, b.assessment_experience || null, safeCvText, b.cv_storage_path || null, req.user.id, b.remarks || null]
       );
       const candidate = cr.rows[0];
       console.log('[Candidate] Saved OK:', candidate.name, 'cv_url:', candidate.cv_url || 'STILL NULL');
@@ -305,7 +305,8 @@ router.put('/:id', authenticate, async (req, res) => {
       current_ctc_fixed, current_ctc_variable, expected_ctc_fixed, expected_ctc_variable,
       notice_period, last_working_day, holding_offer, holding_offer_details,
       referral_name, referral_phone, referral_bonus_eligible,
-      assessment_soft_skills, assessment_stability, assessment_technical, assessment_experience
+      assessment_soft_skills, assessment_stability, assessment_technical, assessment_experience,
+      remarks
     } = req.body;
 
     const result = await query(
@@ -315,7 +316,7 @@ router.put('/:id', authenticate, async (req, res) => {
         notice_period=$14, last_working_day=$15, holding_offer=$16, holding_offer_details=$17,
         referral_name=$18, referral_phone=$19, referral_bonus_eligible=$20,
         assessment_soft_skills=$21, assessment_stability=$22, assessment_technical=$23, assessment_experience=$24,
-        updated_at=NOW() WHERE id=$25 RETURNING *`,
+        remarks=$25, updated_at=NOW() WHERE id=$26 RETURNING *`,
       [name, email, phone, location, experience_years || null, skills,
        current_role, current_company, education,
        current_ctc_fixed || null, current_ctc_variable || null,
@@ -323,7 +324,7 @@ router.put('/:id', authenticate, async (req, res) => {
        notice_period, last_working_day || null, holding_offer || false, holding_offer_details,
        referral_name, referral_phone, referral_bonus_eligible || false,
        assessment_soft_skills || null, assessment_stability || null,
-       assessment_technical || null, assessment_experience || null, req.params.id]
+       assessment_technical || null, assessment_experience || null, remarks || null, req.params.id]
     );
 
     // "Map to Requirement" from the edit form: add the candidate to that requirement's
