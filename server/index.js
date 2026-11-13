@@ -19,6 +19,7 @@ const spocRoutes = require('./routes/spocs');
 const sendcvRoutes = require('./routes/sendcv');
 const publicRoutes = require('./routes/public');
 const bdRoutes = require('./routes/bd');
+const leaveRoutes = require('./routes/leave');
 const { authenticate } = require('./middleware/auth');
 
 const app = express();
@@ -67,6 +68,7 @@ app.use('/api/reports', authenticate, apiLimiter, reportRoutes);
 app.use('/api/outreach', authenticate, outreachRoutes);
 app.use('/api/send-cv', authenticate, sendcvRoutes);
 app.use('/api/bd', authenticate, apiLimiter, bdRoutes);
+app.use('/api/leave', authenticate, apiLimiter, leaveRoutes);
 
 app.use((err, req, res, next) => {
   console.error('Error:', err.message);
@@ -86,4 +88,9 @@ app.listen(PORT, () => {
   console.log(`FX CRM API running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`DB pool: max 30 connections`);
+  try {
+    require('./lib/reminders').startReminderScheduler();
+  } catch (e) {
+    console.error('Reminder scheduler failed to start:', e.message);
+  }
 });
